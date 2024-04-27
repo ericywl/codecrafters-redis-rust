@@ -1,5 +1,5 @@
 use std::{
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
 };
 
@@ -24,14 +24,8 @@ fn main() {
 
 fn handle_connection(mut stream: TcpStream) {
     let buf_reader = BufReader::new(&mut stream);
-    let request: Vec<_> = buf_reader
-        .lines()
-        .map(|result| result.unwrap())
-        .take_while(|line| !line.is_empty())
-        .collect();
+    let request_line = buf_reader.lines().next().unwrap().unwrap();
 
-    if request.get(0).unwrap().to_lowercase() == "ping" {
-        let response = "PONG\r\n";
-        stream.write_all(response.as_bytes()).unwrap();
-    }
+    let response = "+PONG\r\n";
+    stream.write_all(response.as_bytes()).unwrap();
 }
