@@ -1,5 +1,5 @@
 use std::{
-    io::{BufRead, BufReader, Read, Write},
+    io::{self, BufRead, BufReader, BufWriter, Read, Write},
     net::{TcpListener, TcpStream},
 };
 
@@ -9,23 +9,26 @@ fn main() {
 
     let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
 
-    for stream in listener.incoming() {
-        match stream {
-            Ok(_stream) => {
+    for _stream in listener.incoming() {
+        match _stream {
+            Ok(stream) => {
                 println!("Accepted new connection");
-                handle_connection(_stream);
+                handle_connection(stream);
             }
             Err(e) => {
-                eprintln!("Error: {}", e);
+                eprintln!("Tcp stream error: {e}");
             }
         }
     }
 }
 
 fn handle_connection(mut stream: TcpStream) {
-    let buf_reader = BufReader::new(&mut stream);
-    let request_line = buf_reader.lines().next().unwrap().unwrap();
-
-    let response = "+PONG\r\n";
-    stream.write_all(response.as_bytes()).unwrap();
+    let mut buf = [0; 512];
+    loop {
+        let read_count = stream.read(&mut buf).unwrap();
+        if read_count == 0 {
+            break;
+        }
+        stream.write(b"+PONG\r\n").unwrap();
+    }
 }
