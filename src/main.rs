@@ -1,4 +1,5 @@
-use redis_starter_rust::resp::{BulkString, Decoder, Encoder, Value};
+use redis_starter_rust::redis::resp::{BulkString, Value};
+use redis_starter_rust::redis::session::Buffer;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -28,14 +29,15 @@ async fn main() {
 }
 
 async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
-    let mut buf = [0; 512];
+    let mut read_buf = [0; 512];
     loop {
-        let read_count = stream.read(&mut buf).await?;
+        let read_count = stream.read(&mut read_buf).await?;
         if read_count == 0 {
             return Ok(());
         }
 
-        let value = Decoder::decode(&buf[..]).map_err(|e| anyhow::anyhow!("Decode error: {e}"))?;
+        let value =
+            Value::decode(&read_buf[..]).map_err(|e| anyhow::anyhow!("Decode error: {e}"))?;
         let (command, args) = parse_request(value)?;
         let response = match command.to_ascii_lowercase().as_str() {
             "ping" => Value::SimpleString("PONG".to_string().into()),
@@ -43,7 +45,10 @@ async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
             c => panic!("Cannot handle command {}", c),
         };
 
-        stream.write(&Encoder::encode(response)).await?;
+        let mut write_buf = Vec::new();
+        let mut buffer = Buffer::new(&mut write_buf);
+        response.encode(&mut buffer)?;
+        stream.write(&write_buf[..]).await?;
     }
 }
 
