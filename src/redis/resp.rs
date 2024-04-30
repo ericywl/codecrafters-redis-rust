@@ -1,5 +1,6 @@
 use std::{fmt::Display, io, num::ParseIntError, string::FromUtf8Error};
 
+use derive_more::{Display, Into};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -77,26 +78,20 @@ impl Token {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Into, Display)]
 pub struct SimpleString {
     s: String,
-}
-
-impl Display for SimpleString {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.s)
-    }
-}
-
-impl From<String> for SimpleString {
-    fn from(value: String) -> Self {
-        Self { s: value }
-    }
 }
 
 impl Into<String> for &SimpleString {
     fn into(self) -> String {
         self.s.clone()
+    }
+}
+
+impl From<String> for SimpleString {
+    fn from(value: String) -> Self {
+        Self::new(value)
     }
 }
 
@@ -122,32 +117,30 @@ impl Decoder for SimpleString {
 }
 
 impl SimpleString {
+    pub fn new(s: String) -> Self {
+        Self { s }
+    }
+
     /// Returns SimpleString as string.
     pub fn as_str(&self) -> &str {
         &self.s
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Display, Into)]
 pub struct SimpleError {
     s: String,
-}
-
-impl Display for SimpleError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.s)
-    }
-}
-
-impl From<String> for SimpleError {
-    fn from(value: String) -> Self {
-        Self { s: value }
-    }
 }
 
 impl Into<String> for &SimpleError {
     fn into(self) -> String {
         self.s.clone()
+    }
+}
+
+impl From<String> for SimpleError {
+    fn from(value: String) -> Self {
+        Self::new(value)
     }
 }
 
@@ -173,21 +166,19 @@ impl Decoder for SimpleError {
 }
 
 impl SimpleError {
+    pub fn new(s: String) -> Self {
+        Self { s }
+    }
+
     /// Returns SimpleError as string.
     pub fn as_str(&self) -> &str {
         &self.s
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Display, Into)]
 pub struct Integer {
     i: i64,
-}
-
-impl Display for Integer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.i)
-    }
 }
 
 impl Into<i64> for &Integer {
@@ -198,7 +189,7 @@ impl Into<i64> for &Integer {
 
 impl From<i64> for Integer {
     fn from(value: i64) -> Self {
-        Self { i: value }
+        Self::new(value)
     }
 }
 
@@ -224,16 +215,19 @@ impl Decoder for Integer {
 }
 
 impl Integer {
+    pub fn new(i: i64) -> Self {
+        Self { i }
+    }
+
     /// Returns Integer as int64.
     pub fn as_int(&self) -> i64 {
         self.i
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BulkString {
-    is_null: bool,
-    bytes: Vec<u8>,
+    bytes: Option<Vec<u8>>,
 }
 
 impl Display for BulkString {
@@ -242,32 +236,26 @@ impl Display for BulkString {
     }
 }
 
-impl TryInto<String> for &BulkString {
-    type Error = FromUtf8Error;
-    fn try_into(self) -> Result<String, Self::Error> {
-        String::from_utf8(self.bytes.clone())
-    }
-}
-
 impl From<Vec<u8>> for BulkString {
     fn from(bytes: Vec<u8>) -> Self {
-        Self {
-            is_null: false,
-            bytes,
-        }
+        Self::new(bytes)
     }
 }
 
 impl Encoder for BulkString {
     /// Returns BulkString formatted as `b"$<len>\r\n<data>\r\n"`
     fn _encode(&self, buf: &mut impl io::Write) -> Result<(), EncodeError> {
-        if self.is_null {
-            write!(buf, "{}-1\r\n", Token::Dollar)?;
-            return Ok(());
-        }
+        let bytes = match &self.bytes {
+            Some(b) => b,
+            None => {
+                // Null BulkString
+                write!(buf, "{}-1\r\n", Token::Dollar)?;
+                return Ok(());
+            }
+        };
 
-        write!(buf, "{}{}\r\n", Token::Dollar, self.bytes.len())?;
-        buf.write_all(&self.bytes)?;
+        write!(buf, "{}{}\r\n", Token::Dollar, bytes.len())?;
+        buf.write_all(&bytes)?;
         write!(buf, "\r\n")?;
         Ok(())
     }
@@ -304,37 +292,39 @@ impl Decoder for BulkString {
 }
 
 impl BulkString {
-    pub fn null() -> Self {
-        Self {
-            is_null: true,
-            bytes: vec![],
-        }
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self { bytes: Some(bytes) }
     }
 
-    /// Returns if BulkString is null.
-    pub fn is_null(&self) -> bool {
-        return self.is_null;
+    pub fn null() -> Self {
+        Self { bytes: None }
     }
 
     /// Returns BulkString as bytes.
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes
+    pub fn as_bytes(&self) -> Option<&[u8]> {
+        match &self.bytes {
+            Some(b) => Some(b),
+            None => None,
+        }
     }
 
     /// Returns BulkString as string if it can be encoded into a string.
     /// Otherwise returns None.
     pub fn as_str(&self) -> Option<String> {
-        match String::from_utf8(self.bytes.to_vec()) {
-            Ok(s) => Some(s),
-            Err(_) => None,
+        if let Some(bytes) = self.as_bytes() {
+            return match String::from_utf8(bytes.to_vec()) {
+                Ok(s) => Some(s),
+                Err(_) => None,
+            };
         }
+
+        None
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Array {
-    is_null: bool,
-    values: Vec<Value>,
+    values: Option<Vec<Value>>,
 }
 
 impl Display for Array {
@@ -345,42 +335,43 @@ impl Display for Array {
 
 impl From<Vec<Value>> for Array {
     fn from(values: Vec<Value>) -> Self {
-        Self {
-            is_null: false,
-            values,
-        }
+        Self::new(values)
     }
 }
 
 impl Array {
-    pub fn null() -> Self {
+    pub fn new(values: Vec<Value>) -> Self {
         Self {
-            is_null: true,
-            values: vec![],
+            values: Some(values),
         }
     }
 
-    /// Returns if Array is null.
-    pub fn is_null(&self) -> bool {
-        self.is_null
+    pub fn null() -> Self {
+        Self { values: None }
     }
 
     /// Returns list of Values contained in the Array.
-    pub fn values(&self) -> &[Value] {
-        &self.values
+    pub fn values(&self) -> Option<&[Value]> {
+        match &self.values {
+            Some(values) => Some(values),
+            None => None,
+        }
     }
 }
 
 impl Encoder for Array {
     /// Returns Array formatted as`b"$<size>\r\n<element_1>\r\n<element2>\r\n"`.
     fn _encode(&self, buf: &mut impl io::Write) -> Result<(), EncodeError> {
-        if self.is_null {
-            write!(buf, "{}-1\r\n", Token::Star)?;
-            return Ok(());
-        }
+        let values = match &self.values {
+            Some(v) => v,
+            None => {
+                write!(buf, "{}-1\r\n", Token::Star)?;
+                return Ok(());
+            }
+        };
 
-        write!(buf, "{}{}\r\n", Token::Star, self.values.len())?;
-        for val in &self.values {
+        write!(buf, "{}{}\r\n", Token::Star, values.len())?;
+        for val in values {
             val._encode(buf)?;
         }
 
@@ -404,7 +395,7 @@ impl Decoder for Array {
 
         let mut values = vec![];
         for _ in 0..arr_size {
-            let (val, len) = Value::_decode(&buf[bytes_consumed..])?;
+            let (val, len) = Value::decode_with_len(&buf[bytes_consumed..])?;
             values.push(val);
             bytes_consumed += len;
         }
@@ -413,7 +404,7 @@ impl Decoder for Array {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Display)]
 #[enum_delegate::implement(Encoder)]
 pub enum Value {
     SimpleString(SimpleString),
@@ -429,11 +420,11 @@ impl Value {
     }
 
     pub fn decode(buf: &[u8]) -> Result<Self, DecodeError> {
-        let (val, _) = Self::_decode(buf)?;
+        let (val, _) = Self::decode_with_len(buf)?;
         Ok(val)
     }
 
-    fn _decode(buf: &[u8]) -> Result<(Self, usize), DecodeError> {
+    fn decode_with_len(buf: &[u8]) -> Result<(Self, usize), DecodeError> {
         if buf.len() == 0 {
             return Err(DecodeError::EmptyBytes);
         }
@@ -534,6 +525,7 @@ fn read_until_crlf(buffer: &[u8]) -> Option<(&[u8], usize)> {
     return None;
 }
 
+#[cfg(test)]
 mod util_test {
     use super::*;
 
@@ -585,7 +577,7 @@ mod decoder_test {
     fn decode_bulk_string() {
         let resp = Value::decode(b"$4\r\nHell\r\n").expect("Decode bulk string unexpected error");
         match resp {
-            Value::BulkString(bs) => assert_eq!(bs.as_bytes(), b"Hell"),
+            Value::BulkString(bs) => assert_eq!(bs.as_bytes(), Some("Hell".as_bytes())),
             any => panic!("Wrong type for decode bulk string: {:?}", any),
         }
     }
@@ -613,7 +605,7 @@ mod decoder_test {
         let resp = Value::decode(b"*2\r\n:12\r\n+Yea\r\n").expect("Decode array unexpected error");
         match resp {
             Value::Array(arr) => {
-                let mut iter = arr.values().iter();
+                let mut iter = arr.values().unwrap().iter();
                 assert_eq!(iter.next().unwrap().integer().unwrap().as_int(), 12);
                 assert_eq!(
                     iter.next().unwrap().simple_string().unwrap().as_str(),
@@ -632,7 +624,15 @@ mod decoder_test {
         .expect("Decode array unexpected error");
         match resp {
             Value::Array(arr) => {
-                let first_values = arr.values().get(0).unwrap().array().unwrap().values();
+                let first_values = arr
+                    .values()
+                    .unwrap()
+                    .get(0)
+                    .unwrap()
+                    .array()
+                    .unwrap()
+                    .values()
+                    .unwrap();
                 assert_eq!(first_values.get(0).unwrap().integer().unwrap().as_int(), 12);
                 assert_eq!(
                     first_values
@@ -653,7 +653,15 @@ mod decoder_test {
                     "Oopsie"
                 );
 
-                let second_values = arr.values().get(1).unwrap().array().unwrap().values();
+                let second_values = arr
+                    .values()
+                    .unwrap()
+                    .get(1)
+                    .unwrap()
+                    .array()
+                    .unwrap()
+                    .values()
+                    .unwrap();
                 assert_eq!(
                     second_values
                         .get(0)
@@ -661,7 +669,7 @@ mod decoder_test {
                         .bulk_string()
                         .unwrap()
                         .as_bytes(),
-                    "Hello".as_bytes()
+                    Some("Hello".as_bytes())
                 );
                 assert_eq!(
                     second_values
@@ -670,7 +678,7 @@ mod decoder_test {
                         .bulk_string()
                         .unwrap()
                         .as_bytes(),
-                    "GGWP".as_bytes()
+                    Some("GGWP".as_bytes())
                 );
             }
             _ => panic!("Wrong type for decode array"),
