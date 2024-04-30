@@ -86,6 +86,27 @@ impl SetArg {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct GetArg {
+    key: BulkString,
+}
+
+impl GetArg {
+    pub fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, CommandError> {
+        let v = iter.next().ok_or(CommandError::WrongNumArgs)?;
+        let key = v
+            .bulk_string()
+            .ok_or(CommandError::InvalidArgument(v.clone()))?
+            .clone();
+
+        Ok(Self { key })
+    }
+
+    pub fn key(&self) -> &BulkString {
+        &self.key
+    }
+}
+
 /// Available commands for Redis.
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -97,6 +118,9 @@ pub enum Command {
 
     /// Set expects 2 or 3 BulkString argument.
     Set(SetArg),
+
+    /// Get expects 1 BulkString argument.
+    Get(GetArg),
 }
 
 #[derive(Debug, Clone, Error)]
@@ -133,6 +157,7 @@ impl Command {
             "ping" => Ok(Self::Ping(PingArg::parse(&mut iter)?)),
             "echo" => Ok(Self::Echo(EchoArg::parse(&mut iter)?)),
             "set" => Ok(Self::Set(SetArg::parse(&mut iter)?)),
+            "get" => Ok(Self::Get(GetArg::parse(&mut iter)?)),
             _ => Err(CommandError::InvalidCommand),
         }
     }

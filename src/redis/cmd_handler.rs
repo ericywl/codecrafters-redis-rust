@@ -4,7 +4,7 @@ use thiserror::Error;
 use tracing::info;
 
 use super::{
-    cmd::{Command, EchoArg, PingArg, SetArg},
+    cmd::{Command, EchoArg, GetArg, PingArg, SetArg},
     resp::{Array, BulkString, SimpleString, Value},
 };
 
@@ -67,6 +67,24 @@ impl<'a> SetHandler<'a> {
 }
 
 #[derive(Debug)]
+struct GetHandler<'a> {
+    map: &'a HashMap<BulkString, BulkString>,
+}
+
+impl<'a> GetHandler<'a> {
+    fn new(map: &'a HashMap<BulkString, BulkString>) -> Self {
+        Self { map }
+    }
+
+    fn handle(&mut self, arg: GetArg) -> Result<Value, HandleCommandError> {
+        match self.map.get(arg.key()) {
+            Some(value) => Ok(Value::BulkString(value.clone())),
+            None => Ok(Value::BulkString(BulkString::null())),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct CommandHandler<'a> {
     map: &'a mut HashMap<BulkString, BulkString>,
 }
@@ -82,6 +100,7 @@ impl<'a> CommandHandler<'a> {
             Command::Ping(arg) => PingHandler::new().handle(arg),
             Command::Echo(arg) => EchoHandler::new().handle(arg),
             Command::Set(arg) => SetHandler::new(self.map).handle(arg),
+            Command::Get(arg) => GetHandler::new(&self.map).handle(arg),
         }
     }
 }

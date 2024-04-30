@@ -114,8 +114,8 @@ impl Redis {
             if bytes == 0 {
                 break;
             }
-            info!("Received {:?}", &buf[..bytes]);
 
+            debug!("Received {:?}", &buf[..bytes]);
             let (req, resp_rx) = Request::decode(&buf[..bytes])?;
             let _ = reqs_tx.send(req).await;
 
@@ -127,7 +127,7 @@ impl Redis {
             let count = buf.count;
             let buf = &buf.inner[..count];
 
-            info!("Sending {:?}", buf);
+            debug!("Sending {:?}", buf);
             stream.write(buf).await?;
         }
 
