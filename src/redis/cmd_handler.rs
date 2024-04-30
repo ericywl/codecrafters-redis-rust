@@ -1,10 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 
 use thiserror::Error;
 use tracing::info;
 
 use super::{
-    cmd::{Command, EchoArg, PingArg},
+    cmd::{Command, EchoArg, PingArg, SetArg},
     resp::{Array, BulkString, SimpleString, Value},
 };
 
@@ -26,7 +26,7 @@ impl PingHandler {
                 Value::BulkString(msg.clone()),
             ])))
         } else {
-            Ok(Value::SimpleString(SimpleString::new("PONG".to_owned())))
+            Ok(Value::SimpleString(SimpleString::new("PONG".into())))
         }
     }
 }
@@ -45,20 +45,43 @@ impl EchoHandler {
 }
 
 #[derive(Debug)]
-pub struct CommandHandler<'a> {
-    map: &'a HashMap<Value, Value>,
+struct SetHandler<'a> {
+    map: &'a mut HashMap<BulkString, BulkString>,
 }
 
-impl<'a> CommandHandler<'a> {
-    pub fn new(map: &'a HashMap<Value, Value>) -> Self {
+impl<'a> SetHandler<'a> {
+    fn new(map: &'a mut HashMap<BulkString, BulkString>) -> Self {
         Self { map }
     }
 
-    pub fn handle(&self, cmd: Command) -> Result<Value, HandleCommandError> {
+    fn handle(&mut self, arg: SetArg) -> Result<Value, HandleCommandError> {
+        match self.map.entry(arg.key().clone()) {
+            Entry::Occupied(mut e) => *e.get_mut() = arg.value().clone(),
+            Entry::Vacant(e) => {
+                e.insert(arg.value().clone());
+            }
+        };
+
+        Ok(Value::SimpleString(SimpleString::new("OK".into())))
+    }
+}
+
+#[derive(Debug)]
+pub struct CommandHandler<'a> {
+    map: &'a mut HashMap<BulkString, BulkString>,
+}
+
+impl<'a> CommandHandler<'a> {
+    pub fn new(map: &'a mut HashMap<BulkString, BulkString>) -> Self {
+        Self { map }
+    }
+
+    pub fn handle(&mut self, cmd: Command) -> Result<Value, HandleCommandError> {
         info!("Handling command {cmd:?}");
         match cmd {
             Command::Ping(arg) => PingHandler::new().handle(arg),
             Command::Echo(arg) => EchoHandler::new().handle(arg),
+            Command::Set(arg) => SetHandler::new(self.map).handle(arg),
         }
     }
 }

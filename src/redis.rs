@@ -14,8 +14,9 @@ use crate::redis::cmd_handler::CommandHandler;
 
 use self::cmd::{Command, CommandError};
 use self::cmd_handler::HandleCommandError;
-use self::resp::{EncodeError, Value};
+use self::resp::{BulkString, EncodeError, Value};
 
+#[derive(Debug)]
 struct Request {
     cmd: Command,
     tx: oneshot::Sender<Response>,
@@ -32,6 +33,7 @@ impl Request {
     }
 }
 
+#[derive(Debug)]
 struct Response(Value);
 
 impl Response {
@@ -63,7 +65,7 @@ pub enum RedisError {
 
 pub struct Redis {
     listener: tokio::net::TcpListener,
-    map: HashMap<Value, Value>,
+    map: HashMap<BulkString, BulkString>,
 }
 
 impl Redis {
@@ -75,15 +77,21 @@ impl Redis {
         })
     }
 
-    pub async fn start(&self) -> Result<(), RedisError> {
+    pub async fn start(mut self) -> Result<(), RedisError> {
         let (reqs_tx, mut reqs_rx) = mpsc::channel(128);
 
         loop {
             tokio::select! {
                 conn = self.listener.accept() => {
-                    let (socket, addr) = conn?;
+                    let (stream, addr) = conn?;
                     info!("Accepted new connection from {addr:?}");
-                    self.handle_connection(socket, reqs_tx.clone()).await?;
+                    let reqs_tx = reqs_tx.clone();
+                    let _ = tokio::spawn(async move {
+                        match Self::handle_connection(stream, reqs_tx).await {
+                            Ok(_) => (),
+                            Err(e) => error!("Error handling connection: {e}"),
+                        }
+                    });
                 }
 
                 Some(req) = reqs_rx.recv() => {
@@ -97,7 +105,6 @@ impl Redis {
     }
 
     async fn handle_connection(
-        &self,
         mut stream: TcpStream,
         reqs_tx: mpsc::Sender<Request>,
     ) -> Result<(), RedisError> {
@@ -107,7 +114,7 @@ impl Redis {
             if bytes == 0 {
                 break;
             }
-            debug!("Received {:?}", &buf[..bytes]);
+            info!("Received {:?}", &buf[..bytes]);
 
             let (req, resp_rx) = Request::decode(&buf[..bytes])?;
             let _ = reqs_tx.send(req).await;
@@ -120,16 +127,16 @@ impl Redis {
             let count = buf.count;
             let buf = &buf.inner[..count];
 
-            debug!("Sending {:?}", buf);
+            info!("Sending {:?}", buf);
             stream.write(buf).await?;
         }
 
         Ok(())
     }
 
-    async fn handle_request(&self, req: Request) -> Result<(), RedisError> {
+    async fn handle_request(&mut self, req: Request) -> Result<(), RedisError> {
         let Request { cmd, tx } = req;
-        let handler = CommandHandler::new(&self.map);
+        let mut handler = CommandHandler::new(&mut self.map);
         let resp: Response = handler.handle(cmd)?.into();
         let _ = tx.send(resp);
 
