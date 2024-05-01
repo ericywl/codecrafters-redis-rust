@@ -150,16 +150,16 @@ fn consume_args_from_iter(
 /// Available commands for Redis.
 #[derive(Debug, Clone)]
 pub enum Command {
-    /// Ping expects either 0 or 1 BulkString argument.
+    /// PING [msg]
     Ping(PingArg),
 
-    /// Echo expects 1 BulkString argument.
+    /// ECHO msg
     Echo(EchoArg),
 
-    /// Set expects 2 or 3 BulkString argument.
+    /// SET key value [PX milliseconds]
     Set(SetArg),
 
-    /// Get expects 1 BulkString argument.
+    /// GET key
     Get(GetArg),
 }
 

@@ -82,6 +82,7 @@ impl Redis {
 
         loop {
             tokio::select! {
+                // Handle connection
                 conn = self.listener.accept() => {
                     let (stream, addr) = conn?;
                     info!("Accepted new connection from {addr:?}");
@@ -94,6 +95,7 @@ impl Redis {
                     });
                 }
 
+                // Handle request from connection
                 Some(req) = reqs_rx.recv() => {
                     match self.handle_request(req).await {
                         Ok(_) => (),
@@ -116,9 +118,11 @@ impl Redis {
             }
 
             debug!("Received {:?}", &buf[..bytes]);
+            // Send request to the request handler
             let (req, resp_rx) = Request::decode(&buf[..bytes])?;
             let _ = reqs_tx.send(req).await;
 
+            // Wair for response from the request handler, encode the response
             let resp = resp_rx.await.unwrap();
             let mut write_buf = Vec::new();
             let mut buf = Buffer::new(&mut write_buf);
@@ -127,6 +131,7 @@ impl Redis {
             let count = buf.count;
             let buf = &buf.inner[..count];
 
+            // Write encoded response to stream
             debug!("Sending {:?}", buf);
             stream.write(buf).await?;
         }
@@ -135,6 +140,7 @@ impl Redis {
     }
 
     async fn handle_request(&mut self, req: Request) -> Result<(), RedisError> {
+        // Handle request and send back response via channel
         let Request { cmd, tx } = req;
         let resp: Response = self.handler.handle(cmd)?.into();
         let _ = tx.send(resp);
@@ -143,6 +149,7 @@ impl Redis {
     }
 }
 
+/// Buffer is a wrapper for io::Write.
 struct Buffer<W> {
     inner: W,
     count: usize,
@@ -166,6 +173,7 @@ where
         self.count += len;
         Ok(len)
     }
+
     fn flush(&mut self) -> std::io::Result<()> {
         self.inner.flush()
     }

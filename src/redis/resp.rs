@@ -418,6 +418,7 @@ impl Decoder for Array {
             return Ok((Array::null(), bytes_consumed));
         }
 
+        // Consume the rest of elements
         let mut values = vec![];
         for _ in 0..arr_size {
             let (val, len) = Value::decode_with_len(&buf[bytes_consumed..])?;
@@ -454,29 +455,35 @@ impl Value {
             return Err(DecodeError::EmptyBytes);
         }
 
-        // Get first byte and match type
+        // Get first byte and match type.
+        // We already checked that buffer length is greater than 0, so can just unwrap.
         let first_byte = buf.get(0).unwrap().clone();
         match Token::from(first_byte as char) {
             Some(Token::Plus) => {
                 let (s, size) = SimpleString::_decode(buf)?;
                 Ok((Value::SimpleString(s), size))
             }
+
             Some(Token::Minus) => {
                 let (s, size) = SimpleError::_decode(buf)?;
                 Ok((Value::SimpleError(s), size))
             }
+
             Some(Token::Colon) => {
                 let (i, size) = Integer::_decode(buf)?;
                 Ok((Value::Integer(i), size))
             }
+
             Some(Token::Dollar) => {
                 let (bs, size) = BulkString::_decode(buf)?;
                 Ok((Value::BulkString(bs), size))
             }
+
             Some(Token::Star) => {
                 let (arr, size) = Array::_decode(buf)?;
                 Ok((Value::Array(arr), size))
             }
+
             _ => Err(DecodeError::UnknownType { first_byte }),
         }
     }
