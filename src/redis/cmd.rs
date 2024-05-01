@@ -10,11 +10,15 @@ pub struct PingArg {
 }
 
 impl PingArg {
+    pub fn new(msg: Option<BulkString>) -> Self {
+        Self { msg }
+    }
+
     fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, CommandError> {
         let args = consume_args_from_iter(iter, 0, 1)?;
         let msg = args.get(0).map(|bs| bs.clone());
 
-        Ok(PingArg { msg })
+        Ok(PingArg::new(msg))
     }
 
     pub fn msg(&self) -> Option<&BulkString> {
@@ -28,11 +32,15 @@ pub struct EchoArg {
 }
 
 impl EchoArg {
-    pub fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, CommandError> {
+    pub fn new(msg: BulkString) -> Self {
+        Self { msg }
+    }
+
+    fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, CommandError> {
         let args = consume_args_from_iter(iter, 1, 0)?;
         let msg = args.get(0).unwrap().clone();
 
-        Ok(Self { msg })
+        Ok(Self::new(msg))
     }
 
     pub fn msg(&self) -> &BulkString {
@@ -48,7 +56,11 @@ pub struct SetArg {
 }
 
 impl SetArg {
-    pub fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, CommandError> {
+    pub fn new(key: BulkString, value: BulkString, expiry: Option<Duration>) -> Self {
+        Self { key, value, expiry }
+    }
+
+    fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, CommandError> {
         let args = consume_args_from_iter(iter, 2, 2)?;
         let key = args.get(0).unwrap().clone();
         let value = args.get(1).unwrap().clone();
@@ -68,7 +80,7 @@ impl SetArg {
             None => None,
         };
 
-        Ok(Self { key, value, expiry })
+        Ok(Self::new(key, value, expiry))
     }
 
     pub fn key(&self) -> &BulkString {
@@ -90,11 +102,15 @@ pub struct GetArg {
 }
 
 impl GetArg {
+    pub fn new(key: BulkString) -> Self {
+        Self { key }
+    }
+
     pub fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, CommandError> {
         let args = consume_args_from_iter(iter, 1, 0)?;
         let key = args.get(0).unwrap().clone();
 
-        Ok(Self { key })
+        Ok(Self::new(key))
     }
 
     pub fn key(&self) -> &BulkString {

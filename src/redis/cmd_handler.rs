@@ -171,3 +171,111 @@ impl CommandHandler {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::{thread, time::Duration};
+
+    use super::*;
+
+    fn new_hash_map() -> Arc<RwLock<HashMap<BulkString, StoredData>>> {
+        Arc::new(RwLock::new(HashMap::new()))
+    }
+
+    #[test]
+    fn ping() {
+        let mut handler = CommandHandler::new(new_hash_map());
+        let resp = handler
+            .handle(Command::Ping(PingArg::new(None)))
+            .expect("Handle ping unexpected error");
+
+        assert_eq!(resp, Value::SimpleString("PONG".into()));
+    }
+
+    #[test]
+    fn ping_with_msg() {
+        let mut handler = CommandHandler::new(new_hash_map());
+        let resp = handler
+            .handle(Command::Ping(PingArg::new(Some(BulkString::from("WOOP")))))
+            .expect("Handle ping unexpected error");
+
+        assert_eq!(
+            resp,
+            Value::Array(Array::new(vec![
+                Value::BulkString("PONG".into()),
+                Value::BulkString("WOOP".into())
+            ]))
+        );
+    }
+
+    #[test]
+    fn echo() {
+        let mut handler = CommandHandler::new(new_hash_map());
+        let resp = handler
+            .handle(Command::Echo(EchoArg::new(BulkString::from("Hello World"))))
+            .expect("Handle echo unexpected error");
+
+        assert_eq!(resp, Value::BulkString("Hello World".into()))
+    }
+
+    fn simple_set(handler: &mut CommandHandler, k: &str, v: &str, expiry: Option<Duration>) {
+        let key = BulkString::from(k);
+        let value = BulkString::from(v);
+
+        let resp = handler
+            .handle(Command::Set(SetArg::new(key, value, expiry.clone())))
+            .expect("Handle set unexpected error");
+        assert_eq!(resp, Value::SimpleString(SimpleString::from("OK")));
+    }
+
+    fn simple_get(handler: &mut CommandHandler, k: &str) -> Value {
+        let key = BulkString::from(k);
+
+        handler
+            .handle(Command::Get(GetArg::new(key)))
+            .expect("Handle get unexpected error")
+    }
+
+    #[test]
+    fn set_and_get() {
+        let mut handler = CommandHandler::new(new_hash_map());
+
+        let key = "My Key";
+        let value = "My Value";
+
+        // Set entry
+        simple_set(&mut handler, key, value, None);
+
+        // Entry exists
+        let resp = simple_get(&mut handler, key);
+        assert_eq!(
+            resp.bulk_string().unwrap().as_str(),
+            Some(value.to_string())
+        );
+    }
+
+    #[test]
+    fn set_expiry_and_get() {
+        let mut handler = CommandHandler::new(new_hash_map());
+
+        let key = "My Key";
+        let value = "My Value";
+        let expiry = Duration::from_millis(200);
+
+        // Set entry with expiry
+        simple_set(&mut handler, key, value, Some(expiry));
+
+        // Entry still exists
+        thread::sleep(Duration::from_millis(100));
+        let resp = simple_get(&mut handler, key);
+        assert_eq!(
+            resp.bulk_string().unwrap().as_str(),
+            Some(value.to_string())
+        );
+
+        // Entry expired
+        thread::sleep(Duration::from_millis(200));
+        let resp = simple_get(&mut handler, key);
+        assert_eq!(resp.bulk_string().unwrap().as_str(), None);
+    }
+}
