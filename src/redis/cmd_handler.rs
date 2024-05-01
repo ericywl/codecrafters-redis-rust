@@ -8,7 +8,7 @@ use thiserror::Error;
 use tracing::info;
 
 use super::{
-    cmd::{Command, EchoArg, GetArg, PingArg, SetArg},
+    cmd::{Command, EchoArg, GetArg, InfoArg, InfoSection, PingArg, SetArg},
     resp::{Array, BulkString, SimpleString, Value},
 };
 
@@ -48,6 +48,25 @@ impl EchoHandler {
     /// Returns message.
     fn handle(&self, arg: EchoArg) -> Result<Value, HandleCommandError> {
         Ok(Value::BulkString(arg.msg().clone()))
+    }
+}
+
+#[derive(Debug)]
+struct InfoHandler;
+
+impl InfoHandler {
+    fn new() -> Self {
+        Self
+    }
+
+    /// Returns info based on section provided.
+    fn handle(&self, arg: InfoArg) -> Result<Value, HandleCommandError> {
+        let resp = match arg.section().to_owned() {
+            InfoSection::Replication => Value::BulkString(BulkString::from("role:master")),
+            InfoSection::Default => todo!(),
+        };
+
+        Ok(resp)
     }
 }
 
@@ -165,6 +184,7 @@ impl CommandHandler {
         match cmd {
             Command::Ping(arg) => PingHandler::new().handle(arg),
             Command::Echo(arg) => EchoHandler::new().handle(arg),
+            Command::Info(arg) => InfoHandler::new().handle(arg),
             // Clone Arc to increment reference count.
             Command::Set(arg) => SetHandler::new(self.map.clone()).handle(arg),
             Command::Get(arg) => GetHandler::new(self.map.clone()).handle(arg),

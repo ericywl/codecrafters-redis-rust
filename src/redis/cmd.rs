@@ -49,6 +49,48 @@ impl EchoArg {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+pub struct InfoArg {
+    section: InfoSection,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum InfoSection {
+    Default,
+    Replication,
+}
+
+impl InfoArg {
+    pub fn new(section: InfoSection) -> Self {
+        Self { section }
+    }
+
+    fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, CommandError> {
+        let args = consume_args_from_iter(iter, 0, 1)?;
+        let section = Self::parse_info_section(args.get(0))?;
+
+        Ok(Self::new(section))
+    }
+
+    fn parse_info_section(opt_bs: Option<&BulkString>) -> Result<InfoSection, CommandError> {
+        let section_str = match opt_bs {
+            Some(bs) => bs
+                .as_str()
+                .ok_or(CommandError::InvalidArgument(Value::BulkString(bs.clone())))?,
+            None => "".to_string(),
+        };
+
+        Ok(match section_str.to_lowercase().as_str() {
+            "replication" => InfoSection::Replication,
+            _ => InfoSection::Default,
+        })
+    }
+
+    pub fn section(&self) -> &InfoSection {
+        &self.section
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SetArg {
     key: BulkString,
     value: BulkString,
@@ -172,6 +214,9 @@ pub enum Command {
     /// ECHO msg
     Echo(EchoArg),
 
+    /// INFO
+    Info(InfoArg),
+
     /// SET key value [PX milliseconds]
     Set(SetArg),
 
@@ -214,6 +259,7 @@ impl Command {
             "echo" => Ok(Self::Echo(EchoArg::parse(&mut iter)?)),
             "set" => Ok(Self::Set(SetArg::parse(&mut iter)?)),
             "get" => Ok(Self::Get(GetArg::parse(&mut iter)?)),
+            "info" => Ok(Self::Info(InfoArg::parse(&mut iter)?)),
             _ => Err(CommandError::InvalidCommand),
         }
     }
