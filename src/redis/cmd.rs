@@ -1,25 +1,18 @@
+use std::time::Duration;
+
 use thiserror::Error;
 
 use super::resp::{BulkString, DecodeError, Value};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct PingArg {
     msg: Option<BulkString>,
 }
 
 impl PingArg {
     fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, CommandError> {
-        let msg = match iter.next() {
-            Some(val) => Some(
-                val.bulk_string()
-                    .ok_or(CommandError::InvalidArgument(val.clone()))?
-                    .clone(),
-            ),
-            None => None,
-        };
-        if iter.next().is_some() {
-            return Err(CommandError::WrongNumArgs);
-        }
+        let args = consume_args_from_iter(iter, 0, 1)?;
+        let msg = args.get(0).map(|bs| bs.clone());
 
         Ok(PingArg { msg })
     }
@@ -29,24 +22,17 @@ impl PingArg {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct EchoArg {
     msg: BulkString,
 }
 
 impl EchoArg {
     pub fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, CommandError> {
-        let val = iter.next().ok_or(CommandError::WrongNumArgs)?;
-        if iter.next().is_some() {
-            return Err(CommandError::WrongNumArgs);
-        }
+        let args = consume_args_from_iter(iter, 1, 0)?;
+        let msg = args.get(0).unwrap().clone();
 
-        Ok(Self {
-            msg: val
-                .bulk_string()
-                .ok_or(CommandError::InvalidArgument(val.clone()))?
-                .clone(),
-        })
+        Ok(Self { msg })
     }
 
     pub fn msg(&self) -> &BulkString {
@@ -54,27 +40,35 @@ impl EchoArg {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SetArg {
     key: BulkString,
     value: BulkString,
+    expiry: Option<Duration>,
 }
 
 impl SetArg {
     pub fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, CommandError> {
-        let v = iter.next().ok_or(CommandError::WrongNumArgs)?;
-        let key = v
-            .bulk_string()
-            .ok_or(CommandError::InvalidArgument(v.clone()))?
-            .clone();
+        let args = consume_args_from_iter(iter, 2, 2)?;
+        let key = args.get(0).unwrap().clone();
+        let value = args.get(1).unwrap().clone();
 
-        let v = iter.next().ok_or(CommandError::WrongNumArgs)?;
-        let value = v
-            .bulk_string()
-            .ok_or(CommandError::InvalidArgument(v.clone()))?
-            .clone();
+        let expiry = match args.get(2) {
+            Some(arg) => {
+                if bulk_string_to_string(arg)?.eq_ignore_ascii_case("px") {
+                    Some(Duration::from_millis(bulk_string_to_uint64(
+                        args.get(3).ok_or(CommandError::WrongNumArgs)?,
+                    )?))
+                } else {
+                    return Err(CommandError::InvalidArgument(Value::BulkString(
+                        arg.clone(),
+                    )));
+                }
+            }
+            None => None,
+        };
 
-        Ok(Self { key, value })
+        Ok(Self { key, value, expiry })
     }
 
     pub fn key(&self) -> &BulkString {
@@ -83,6 +77,10 @@ impl SetArg {
 
     pub fn value(&self) -> &BulkString {
         &self.value
+    }
+
+    pub fn expiry(&self) -> Option<&Duration> {
+        self.expiry.as_ref()
     }
 }
 
@@ -93,17 +91,59 @@ pub struct GetArg {
 
 impl GetArg {
     pub fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, CommandError> {
-        let v = iter.next().ok_or(CommandError::WrongNumArgs)?;
-        let key = v
-            .bulk_string()
-            .ok_or(CommandError::InvalidArgument(v.clone()))?
-            .clone();
+        let args = consume_args_from_iter(iter, 1, 0)?;
+        let key = args.get(0).unwrap().clone();
 
         Ok(Self { key })
     }
 
     pub fn key(&self) -> &BulkString {
         &self.key
+    }
+}
+
+fn bulk_string_to_uint64(bs: &BulkString) -> Result<u64, CommandError> {
+    let s = bulk_string_to_string(bs)?;
+    Ok(s.parse::<u64>().map_err(|e| DecodeError::ParseInt(e))?)
+}
+
+fn bulk_string_to_string(bs: &BulkString) -> Result<String, CommandError> {
+    bs.as_str()
+        .ok_or(CommandError::InvalidArgument(Value::BulkString(bs.clone())))
+}
+
+fn value_to_bulk_string(val: &Value) -> Result<BulkString, CommandError> {
+    Ok(val
+        .bulk_string()
+        .ok_or(CommandError::InvalidArgument(val.clone()))?
+        .clone())
+}
+
+fn consume_args_from_iter(
+    iter: &mut std::slice::Iter<'_, Value>,
+    necessary: usize,
+    optional: usize,
+) -> Result<Vec<BulkString>, CommandError> {
+    let mut args = Vec::with_capacity(necessary);
+    // Get all necessary args
+    for _ in 0..necessary {
+        let val = iter.next().ok_or(CommandError::WrongNumArgs)?;
+        args.push(value_to_bulk_string(val)?);
+    }
+
+    // Get all optional args
+    for _ in 0..optional {
+        if let Some(val) = iter.next() {
+            args.push(value_to_bulk_string(val)?);
+        }
+    }
+
+    // If there are still any args outside of necessary and optional, return error.
+    // Else return result.
+    if iter.next().is_some() {
+        Err(CommandError::WrongNumArgs)
+    } else {
+        Ok(args)
     }
 }
 
@@ -172,5 +212,49 @@ impl Command {
             .ok_or(CommandError::InvalidCommand)?;
 
         bulk_string.as_str().ok_or(CommandError::InvalidCommand)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn parse_ping() {
+        let cmd = Command::parse(b"*1\r\n$4\r\nPING\r\n").expect("Parse command unexpected error");
+        match cmd {
+            Command::Ping(arg) => assert_eq!(arg, PingArg { msg: None }),
+            _ => panic!("Wrong command for ping"),
+        }
+    }
+
+    #[test]
+    fn parse_ping_optional() {
+        let cmd = Command::parse(b"*2\r\n$4\r\nPING\r\n$5\r\nhello\r\n")
+            .expect("Parse command unexpected error");
+        match cmd {
+            Command::Ping(arg) => assert_eq!(
+                arg,
+                PingArg {
+                    msg: Some(BulkString::from("hello"))
+                }
+            ),
+            _ => panic!("Wrong command for ping"),
+        }
+    }
+
+    #[test]
+    fn parse_echo() {
+        let cmd = Command::parse(b"*2\r\n$4\r\nECHO\r\n$4\r\nYEET\r\n")
+            .expect("Parse command unexpected error");
+        match cmd {
+            Command::Echo(arg) => assert_eq!(
+                arg,
+                EchoArg {
+                    msg: BulkString::from("YEET")
+                }
+            ),
+            _ => panic!("Wrong command for echo"),
+        }
     }
 }

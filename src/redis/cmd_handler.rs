@@ -1,4 +1,8 @@
-use std::collections::{hash_map::Entry, HashMap};
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    sync::{Arc, RwLock},
+    time::SystemTime,
+};
 
 use thiserror::Error;
 use tracing::info;
@@ -45,20 +49,31 @@ impl EchoHandler {
 }
 
 #[derive(Debug)]
-struct SetHandler<'a> {
-    map: &'a mut HashMap<BulkString, BulkString>,
+struct SetHandler {
+    map: Arc<RwLock<HashMap<BulkString, Data>>>,
 }
 
-impl<'a> SetHandler<'a> {
-    fn new(map: &'a mut HashMap<BulkString, BulkString>) -> Self {
+impl SetHandler {
+    fn new(map: Arc<RwLock<HashMap<BulkString, Data>>>) -> Self {
         Self { map }
     }
 
     fn handle(&mut self, arg: SetArg) -> Result<Value, HandleCommandError> {
-        match self.map.entry(arg.key().clone()) {
-            Entry::Occupied(mut e) => *e.get_mut() = arg.value().clone(),
+        let deadline = match arg.expiry() {
+            Some(expiry) => SystemTime::now().checked_add(*expiry),
+            None => None,
+        };
+
+        let data = Data {
+            value: arg.value().clone(),
+            deadline,
+        };
+
+        let mut map = self.map.write().expect("RwLock poisoned");
+        match map.entry(arg.key().clone()) {
+            Entry::Occupied(mut e) => *e.get_mut() = data,
             Entry::Vacant(e) => {
-                e.insert(arg.value().clone());
+                e.insert(data);
             }
         };
 
@@ -67,40 +82,67 @@ impl<'a> SetHandler<'a> {
 }
 
 #[derive(Debug)]
-struct GetHandler<'a> {
-    map: &'a HashMap<BulkString, BulkString>,
+struct GetHandler {
+    map: Arc<RwLock<HashMap<BulkString, Data>>>,
 }
 
-impl<'a> GetHandler<'a> {
-    fn new(map: &'a HashMap<BulkString, BulkString>) -> Self {
+impl GetHandler {
+    fn new(map: Arc<RwLock<HashMap<BulkString, Data>>>) -> Self {
         Self { map }
     }
 
     fn handle(&mut self, arg: GetArg) -> Result<Value, HandleCommandError> {
-        match self.map.get(arg.key()) {
-            Some(value) => Ok(Value::BulkString(value.clone())),
-            None => Ok(Value::BulkString(BulkString::null())),
+        let read_map = self.map.read().expect("RwLock poisoned");
+        let data = match read_map.get(arg.key()) {
+            Some(data) => data.clone(),
+            None => return Ok(Value::BulkString(BulkString::null())),
+        };
+
+        drop(read_map);
+        // No deadline or deadline haven't reached yet
+        if data.deadline.is_none() || data.deadline.unwrap().gt(&SystemTime::now()) {
+            return Ok(Value::BulkString(data.value));
         }
+
+        // Deadline passed, we should clear the entry
+        let mut write_map = self.map.write().expect("RwLock poisonsed");
+        match write_map.entry(arg.key().clone()) {
+            Entry::Occupied(e) => {
+                if e.get().deadline.is_some() && SystemTime::now().gt(&e.get().deadline.unwrap()) {
+                    e.remove();
+                }
+            }
+            Entry::Vacant(_) => (),
+        };
+
+        Ok(Value::BulkString(BulkString::null()))
     }
 }
 
-#[derive(Debug)]
-pub struct CommandHandler<'a> {
-    map: &'a mut HashMap<BulkString, BulkString>,
+#[derive(Debug, Clone)]
+pub struct Data {
+    value: BulkString,
+    deadline: Option<SystemTime>,
 }
 
-impl<'a> CommandHandler<'a> {
-    pub fn new(map: &'a mut HashMap<BulkString, BulkString>) -> Self {
+#[derive(Debug)]
+pub struct CommandHandler {
+    map: Arc<RwLock<HashMap<BulkString, Data>>>,
+}
+
+impl CommandHandler {
+    pub fn new(map: Arc<RwLock<HashMap<BulkString, Data>>>) -> Self {
         Self { map }
     }
 
     pub fn handle(&mut self, cmd: Command) -> Result<Value, HandleCommandError> {
         info!("Handling command {cmd:?}");
+        // Clone Arc to increment reference count.
         match cmd {
             Command::Ping(arg) => PingHandler::new().handle(arg),
             Command::Echo(arg) => EchoHandler::new().handle(arg),
-            Command::Set(arg) => SetHandler::new(self.map).handle(arg),
-            Command::Get(arg) => GetHandler::new(&self.map).handle(arg),
+            Command::Set(arg) => SetHandler::new(self.map.clone()).handle(arg),
+            Command::Get(arg) => GetHandler::new(self.map.clone()).handle(arg),
         }
     }
 }

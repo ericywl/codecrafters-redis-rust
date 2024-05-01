@@ -1,4 +1,4 @@
-use std::{fmt::Display, io, num::ParseIntError, string::FromUtf8Error};
+use std::{fmt::Display, io, num::ParseIntError, str::FromStr, string::FromUtf8Error};
 
 use derive_more::{Display, Into};
 use thiserror::Error;
@@ -95,6 +95,12 @@ impl From<String> for SimpleString {
     }
 }
 
+impl From<&str> for SimpleString {
+    fn from(value: &str) -> Self {
+        Self::new(value.to_owned())
+    }
+}
+
 impl Encoder for SimpleString {
     /// Returns string formatted as `b"+<string>\r\n"`.
     fn _encode(&self, buf: &mut impl io::Write) -> Result<(), EncodeError> {
@@ -141,6 +147,12 @@ impl Into<String> for &SimpleError {
 impl From<String> for SimpleError {
     fn from(value: String) -> Self {
         Self::new(value)
+    }
+}
+
+impl From<&str> for SimpleError {
+    fn from(value: &str) -> Self {
+        Self::new(value.to_owned())
     }
 }
 
@@ -239,6 +251,19 @@ impl Display for BulkString {
 impl From<Vec<u8>> for BulkString {
     fn from(bytes: Vec<u8>) -> Self {
         Self::new(bytes)
+    }
+}
+
+impl From<&str> for BulkString {
+    fn from(s: &str) -> Self {
+        Self::new(s.as_bytes().to_vec())
+    }
+}
+
+impl FromStr for BulkString {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self::from(s))
     }
 }
 

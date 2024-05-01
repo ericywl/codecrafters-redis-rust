@@ -3,6 +3,7 @@ mod cmd_handler;
 mod resp;
 
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -10,11 +11,10 @@ use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info};
 
-use crate::redis::cmd_handler::CommandHandler;
-
 use self::cmd::{Command, CommandError};
+use self::cmd_handler::CommandHandler;
 use self::cmd_handler::HandleCommandError;
-use self::resp::{BulkString, EncodeError, Value};
+use self::resp::{EncodeError, Value};
 
 #[derive(Debug)]
 struct Request {
@@ -65,7 +65,7 @@ pub enum RedisError {
 
 pub struct Redis {
     listener: tokio::net::TcpListener,
-    map: HashMap<BulkString, BulkString>,
+    handler: CommandHandler,
 }
 
 impl Redis {
@@ -73,7 +73,7 @@ impl Redis {
         let listener = tokio::net::TcpListener::bind(addr).await?;
         Ok(Self {
             listener,
-            map: HashMap::new(),
+            handler: CommandHandler::new(Arc::new(RwLock::new(HashMap::new()))),
         })
     }
 
@@ -136,8 +136,7 @@ impl Redis {
 
     async fn handle_request(&mut self, req: Request) -> Result<(), RedisError> {
         let Request { cmd, tx } = req;
-        let mut handler = CommandHandler::new(&mut self.map);
-        let resp: Response = handler.handle(cmd)?.into();
+        let resp: Response = self.handler.handle(cmd)?.into();
         let _ = tx.send(resp);
 
         Ok(())
