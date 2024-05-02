@@ -59,7 +59,7 @@ impl InfoHandler {
         Self
     }
 
-    /// Returns info based on section provided.
+    /// Returns information and statistics about the server in a format that is simple to parse by computers and easy to read by humans.
     fn handle(&self, arg: InfoArg) -> Result<Value, HandleCommandError> {
         let resp = match arg.section().to_owned() {
             InfoSection::Replication => Value::BulkString(BulkString::from("role:master")),

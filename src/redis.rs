@@ -1,6 +1,6 @@
-mod cmd;
-mod cmd_handler;
-mod resp;
+pub mod cmd;
+pub mod cmd_handler;
+pub mod resp;
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};

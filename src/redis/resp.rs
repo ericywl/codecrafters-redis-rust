@@ -3,8 +3,10 @@ use std::{fmt::Display, io, num::ParseIntError, str::FromStr, string::FromUtf8Er
 use derive_more::{Display, Into};
 use thiserror::Error;
 
+/// EncodeError is returned by Encoder when there are any issues with encoding.
 #[derive(Debug, Error)]
 pub enum EncodeError {
+    /// Io is returned if there are problems with writing to `io::Write`.
     #[error(transparent)]
     Io(#[from] io::Error),
 }
@@ -45,11 +47,11 @@ trait Decoder {
 #[derive(Debug, Eq, PartialEq, Clone)]
 #[repr(u8)]
 pub enum Token {
-    Star = b'*',
-    Dollar = b'$',
-    Plus = b'+',
-    Minus = b'-',
-    Colon = b':',
+    Star = b'*',   // Array
+    Dollar = b'$', // BulkString
+    Plus = b'+',   // SimpleString
+    Minus = b'-',  // SimpleError
+    Colon = b':',  // Integer
 }
 
 impl Into<char> for Token {
@@ -102,7 +104,13 @@ impl From<&str> for SimpleString {
 }
 
 impl Encoder for SimpleString {
-    /// Returns string formatted as `b"+<string>\r\n"`.
+    /// Encodes string formatted as `b"+<string>\r\n"`.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if there are no issues with encoding and writing.
+    /// - `EncodeError::...` if there were encoding errors, see the enum variants in order
+    ///     to understand what is the specific error.
     fn _encode(&self, buf: &mut impl io::Write) -> Result<(), EncodeError> {
         write!(buf, "{}{}\r\n", Token::Plus, self.s)?;
         Ok(())
@@ -110,9 +118,15 @@ impl Encoder for SimpleString {
 }
 
 impl Decoder for SimpleString {
+    /// Decodes bytes into SimpleString.
     /// Expects input to be in the form of `b"+<string>\r\n..."`.
     ///
-    /// Returns string and total bytes consumed.
+    /// # Returns
+    ///
+    /// - `Ok((SimpleString, usize))` if there are no issues with decoding. The usize represents total bytes read
+    ///     from the buffer while decoding.
+    /// - `DecodeError::...` if there were some decoding errors, see the enum variants in order to
+    ///     understand what is the specific error.
     fn _decode(buf: &[u8]) -> Result<(Self, usize), DecodeError>
     where
         Self: Sized,
@@ -157,7 +171,13 @@ impl From<&str> for SimpleError {
 }
 
 impl Encoder for SimpleError {
-    /// Returns SimpleError formatted as `b"-<string>\r\n`.
+    /// Encodes SimpleError formatted as `b"-<string>\r\n`.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if there are no issues with encoding and writing.
+    /// - `EncodeError::...` if there were encoding errors, see the enum variants in order
+    ///     to understand what is the specific error.
     fn _encode(&self, buf: &mut impl io::Write) -> Result<(), EncodeError> {
         write!(buf, "{}{}\r\n", Token::Minus, self.s)?;
         Ok(())
@@ -165,9 +185,15 @@ impl Encoder for SimpleError {
 }
 
 impl Decoder for SimpleError {
+    /// Decodes bytes into SimpleError.
     /// Expects input to be in the form of `b"-<string>\r\n..."`.
     ///
-    /// Returns SimpleError and total bytes consumed.
+    /// # Returns
+    ///
+    /// - `Ok((SimpleError, usize))` if there are no issues with decoding. The usize represents total bytes read
+    ///     from the buffer while decoding.
+    /// - `DecodeError::...` if there were some decoding errors, see the enum variants in order to
+    ///     understand what is the specific error.
     fn _decode(buf: &[u8]) -> Result<(Self, usize), DecodeError>
     where
         Self: Sized,
@@ -206,7 +232,13 @@ impl From<i64> for Integer {
 }
 
 impl Encoder for Integer {
-    /// Returns Integer formatted as `b":<integer>\r\n"`.
+    /// Encodes Integer formatted as `b":<integer>\r\n"`.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if there are no issues with encoding and writing.
+    /// - `EncodeError::...` if there were encoding errors, see the enum variants in order
+    ///     to understand what is the specific error.
     fn _encode(&self, buf: &mut impl io::Write) -> Result<(), EncodeError> {
         write!(buf, "{}{}\r\n", Token::Colon, self.i)?;
         Ok(())
@@ -214,9 +246,15 @@ impl Encoder for Integer {
 }
 
 impl Decoder for Integer {
+    /// Decodes bytes into Integer.
     /// Expects input to be in the form of `b":<integer>\r\n..."`.
     ///
-    /// Returns Integer and total bytes consumed.
+    /// # Returns
+    ///
+    /// - `Ok((Integer, usize))` if there are no issues with decoding. The usize represents total bytes read
+    ///     from the buffer while decoding.
+    /// - `DecodeError::...` if there were some decoding errors, see the enum variants in order to
+    ///     understand what is the specific error.
     fn _decode(buf: &[u8]) -> Result<(Self, usize), DecodeError>
     where
         Self: Sized,
@@ -268,7 +306,13 @@ impl FromStr for BulkString {
 }
 
 impl Encoder for BulkString {
-    /// Returns BulkString formatted as `b"$<len>\r\n<data>\r\n"`
+    /// Encodes BulkString formatted as `b"$<len>\r\n<data>\r\n"`
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if there are no issues with encoding and writing.
+    /// - `EncodeError::...` if there were encoding errors, see the enum variants in order
+    ///     to understand what is the specific error.
     fn _encode(&self, buf: &mut impl io::Write) -> Result<(), EncodeError> {
         let bytes = match &self.bytes {
             Some(b) => b,
@@ -287,9 +331,15 @@ impl Encoder for BulkString {
 }
 
 impl Decoder for BulkString {
+    /// Decodes bytes into BulkString.
     /// Expects input to be in the form of `b"$<len>\r\n<data>\r\n..."`.
     ///
-    /// Returns BulkString and total bytes consumed.
+    /// # Returns
+    ///
+    /// - `Ok((BulkString, usize))` if there are no issues with decoding. The usize represents total bytes read
+    ///     from the buffer while decoding.
+    /// - `DecodeError::...` if there were some decoding errors, see the enum variants in order to
+    ///     understand what is the specific error.
     fn _decode(buf: &[u8]) -> Result<(Self, usize), DecodeError>
     where
         Self: Sized,
@@ -385,7 +435,13 @@ impl Array {
 }
 
 impl Encoder for Array {
-    /// Returns Array formatted as`b"$<size>\r\n<element_1>\r\n<element2>\r\n"`.
+    /// Encodes Array formatted as`b"$<size>\r\n<element_1>\r\n<element2>\r\n..."`.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if there are no issues with encoding and writing.
+    /// - `EncodeError::...` if there were encoding errors, see the enum variants in order
+    ///     to understand what is the specific error.
     fn _encode(&self, buf: &mut impl io::Write) -> Result<(), EncodeError> {
         let values = match &self.values {
             Some(v) => v,
@@ -405,9 +461,15 @@ impl Encoder for Array {
 }
 
 impl Decoder for Array {
+    /// Decodes bytes into Array.
     /// Expects input to be in the form of `b"$<size>\r\n<element_1>\r\n<element2>\r\n..."`.
     ///
-    /// Returns Array and total bytes consumed.
+    /// # Returns
+    ///
+    /// - `Ok((Array, usize))` if there are no issues with decoding. The usize represents total bytes read
+    ///     from the buffer while decoding.
+    /// - `DecodeError::...` if there were some decoding errors, see the enum variants in order to
+    ///     understand what is the specific error.
     fn _decode(buf: &[u8]) -> Result<(Self, usize), DecodeError>
     where
         Self: Sized,
@@ -441,10 +503,65 @@ pub enum Value {
 }
 
 impl Value {
+    /// Encodes the Value by writing its RESP byte-form into writers.
+    /// See the respective enum variants for the exact RESP format.
+    ///
+    /// # Arguments
+    ///
+    /// - `buf`: A mutable reference to an implementation of the `io::Write` trait. The bytes will be
+    ///     written into this buffer.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if there are no problems with the encoding and writing.
+    /// - `EncodeError::...` if there were encoding errors, see the enum variants in order
+    ///     to understand what is the specific error.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use std::io::BufWriter;
+    /// use redis_starter_rust::redis::resp;
+    ///
+    /// let value = resp::Value::BulkString(resp::BulkString::from("Something"));
+    /// let mut buf = BufWriter::new(Vec::new());
+    /// match value.encode(&mut buf) {
+    ///     Ok(_) => println!("All good!"),
+    ///     Err(e) => println!("Oh no, something wrong: {e}"),
+    /// }
+    /// ```
+    ///
+    /// In the above example, we create a BulkString Value and encode it into a BufWriter.
     pub fn encode(&self, buf: &mut impl io::Write) -> Result<(), EncodeError> {
         self._encode(buf)
     }
 
+    /// Decodes the bytes according to RESP into Value.
+    ///
+    /// # Arguments
+    ///
+    /// - `buf`: A reference to the bytes to be decoded, which should be in RESP format.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(Value)` if there are no problems with the decoding. The `Value` represents the decoded
+    ///     value of the bytes.
+    /// - `DecodeError::...` if there were some decoding errors, see the enum variants in order to
+    ///     understand what is the specific error.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use redis_starter_rust::redis::resp;
+    ///
+    /// let bytes = b"$4\r\nYeah\r\n";
+    /// match resp::Value::decode(bytes) {
+    ///     Ok(val) => println!("All good: {val}"),
+    ///     Err(e) => println!("Oh no, something went wrong: {e}"),
+    /// }
+    /// ```
+    ///
+    /// In the above example, we have a BulkString Value in byte-form and we decode it.
     pub fn decode(buf: &[u8]) -> Result<Self, DecodeError> {
         let (val, _) = Self::decode_with_len(buf)?;
         Ok(val)
@@ -526,7 +643,11 @@ impl Value {
 
 /// Expects input to be in the form of `b"x<string>\r\n..."`, where x is the type of the RESP.
 ///
-/// Returns string and total bytes consumed.
+/// # Returns
+///
+/// - `Ok((String, usize))` if no decoding errors. The `usize` represents total bytes read.
+/// - `DecodeError::...` if there were some decoding errors, see the enum variants in order to
+///     understand what is the specific error.
 fn decode_to_string(bytes: &[u8]) -> Result<(String, usize), DecodeError> {
     if let Some((b, size)) = read_until_crlf(bytes) {
         let s = String::from_utf8(b[1..].into())?;
@@ -538,7 +659,11 @@ fn decode_to_string(bytes: &[u8]) -> Result<(String, usize), DecodeError> {
 
 /// Expects input to be in the form of `b"x<i64>\r\n..."`, where x is the type of the RESP.
 ///
-/// Returns string and total bytes consumed.
+/// # Returns
+///
+/// - `Ok((i64, usize))` if no decoding errors. The `usize` represents total bytes read.
+/// - `DecodeError::...` if there were some decoding errors, see the enum variants in order to
+///     understand what is the specific error.
 fn decode_to_i64(bytes: &[u8]) -> Result<(i64, usize), DecodeError> {
     let (s, size) = decode_to_string(bytes)?;
 
@@ -547,7 +672,11 @@ fn decode_to_i64(bytes: &[u8]) -> Result<(i64, usize), DecodeError> {
 
 /// Read until the first CRLF.
 ///
-/// Returns size of read buffer as well.
+/// # Returns
+///
+/// - `Some((&[u8], usize))` if there is a CRLF. The tuple represents the part of the
+///     buffer read and total bytes read.
+/// - `None` if there are no CRLFs in the bytes.
 fn read_until_crlf(buffer: &[u8]) -> Option<(&[u8], usize)> {
     for i in 1..buffer.len() {
         if buffer[i - 1] == b'\r' && buffer[i] == b'\n' {
