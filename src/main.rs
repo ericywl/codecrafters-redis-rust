@@ -32,10 +32,10 @@ async fn main() {
     let addr = format!("127.0.0.1:{}", args.port);
     info!("Listening to {addr}...");
 
-    let redis = match Redis::new(
+    let redis = match Redis::init(
         addr,
         RedisConfig {
-            replica_addr: args.replica_addr(),
+            master_addr: args.replica_addr(),
         },
     )
     .await

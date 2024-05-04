@@ -241,7 +241,28 @@ pub enum CommandError {
 
 impl Command {
     pub fn parse(buf: &[u8]) -> Result<Self, CommandError> {
-        let arr = match Value::decode(buf)? {
+        let value = Value::decode(buf)?;
+        Self::try_from(value)
+    }
+
+    fn get_command_str_from_iter(
+        iter: &mut std::slice::Iter<'_, Value>,
+    ) -> Result<String, CommandError> {
+        // Get first value, which should be a BulkString
+        let first_val = iter.next().ok_or(CommandError::InvalidCommand)?;
+        let bulk_string = first_val
+            .bulk_string()
+            .ok_or(CommandError::InvalidCommand)?;
+
+        bulk_string.as_str().ok_or(CommandError::InvalidCommand)
+    }
+}
+
+impl TryFrom<Value> for Command {
+    type Error = CommandError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        let arr = match value {
             Value::Array(a) => a,
             _ => return Err(CommandError::InvalidCommand),
         };
@@ -262,18 +283,6 @@ impl Command {
             "info" => Ok(Self::Info(InfoArg::parse(&mut iter)?)),
             _ => Err(CommandError::InvalidCommand),
         }
-    }
-
-    fn get_command_str_from_iter(
-        iter: &mut std::slice::Iter<'_, Value>,
-    ) -> Result<String, CommandError> {
-        // Get first value, which should be a BulkString
-        let first_val = iter.next().ok_or(CommandError::InvalidCommand)?;
-        let bulk_string = first_val
-            .bulk_string()
-            .ok_or(CommandError::InvalidCommand)?;
-
-        bulk_string.as_str().ok_or(CommandError::InvalidCommand)
     }
 }
 

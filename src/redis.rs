@@ -1,51 +1,34 @@
 pub mod cmd;
 pub mod cmd_handler;
+pub mod replica;
 pub mod resp;
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use rand::distributions::DistString;
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info};
 
-use self::cmd::{Command, CommandError};
+use super::util;
+
+use self::cmd::CommandError;
 use self::cmd_handler::HandleCommandError;
 use self::cmd_handler::{CommandHandler, CommandHandlerConfig};
-use self::resp::{EncodeError, Value};
+use self::replica::{Replication, ReplicationError};
+use self::resp::{DecodeError, EncodeError};
 
-#[derive(Debug)]
-struct Request {
-    cmd: Command,
-    tx: oneshot::Sender<Response>,
+struct RequestChannel {
+    req: util::Request,
+    tx: oneshot::Sender<util::Response>,
 }
 
-impl Request {
-    fn new(cmd: Command) -> (Self, oneshot::Receiver<Response>) {
+impl RequestChannel {
+    fn new(req: util::Request) -> (Self, oneshot::Receiver<util::Response>) {
         let (tx, rx) = oneshot::channel();
-        (Self { cmd, tx }, rx)
-    }
-
-    fn decode(buf: &[u8]) -> Result<(Self, oneshot::Receiver<Response>), CommandError> {
-        Ok(Self::new(Command::parse(buf)?))
-    }
-}
-
-#[derive(Debug)]
-struct Response(Value);
-
-impl Response {
-    fn encode(&self, buf: &mut impl std::io::Write) -> Result<(), EncodeError> {
-        self.0.encode(buf)
-    }
-}
-
-impl From<Value> for Response {
-    fn from(value: Value) -> Self {
-        Self(value)
+        (Self { req, tx }, rx)
     }
 }
 
@@ -55,32 +38,49 @@ pub enum RedisError {
     Encode(#[from] EncodeError),
 
     #[error(transparent)]
+    Decode(#[from] DecodeError),
+
+    #[error(transparent)]
     Command(#[from] CommandError),
 
     #[error(transparent)]
     HandleCommand(#[from] HandleCommandError),
 
     #[error(transparent)]
+    Replication(#[from] ReplicationError),
+
+    #[error(transparent)]
     TokioIo(#[from] tokio::io::Error),
 }
 
 pub struct Redis {
+    /// Listen to client connections.
     listener: tokio::net::TcpListener,
+
+    /// Handles commands from client requests.
     handler: CommandHandler,
+
+    /// Handles replication.
+    replication: Option<Replication>,
 }
 
 #[derive(Debug)]
 pub struct RedisConfig {
-    pub replica_addr: Option<String>,
+    pub master_addr: Option<String>,
 }
 
 impl Redis {
-    pub async fn new(addr: String, config: RedisConfig) -> Result<Self, RedisError> {
+    pub async fn init(addr: String, config: RedisConfig) -> Result<Self, RedisError> {
         let listener = tokio::net::TcpListener::bind(addr).await?;
 
-        let is_replica = config.replica_addr.is_some();
-        let master_repl_id_and_offset = if !is_replica {
-            Some((generate_random_alphanumeric_string(40), 0))
+        let is_replica = config.master_addr.is_some();
+        let master_repl_id_and_offset = if is_replica {
+            None
+        } else {
+            Some((util::generate_random_alphanumeric_string(40), 0))
+        };
+        let replication = if is_replica {
+            Some(Replication::init(config.master_addr.unwrap().clone()).await?)
         } else {
             None
         };
@@ -94,6 +94,7 @@ impl Redis {
                     master_repl_id_and_offset,
                 },
             ),
+            replication,
         })
     }
 
@@ -128,7 +129,7 @@ impl Redis {
 
     async fn handle_connection(
         mut stream: TcpStream,
-        reqs_tx: mpsc::Sender<Request>,
+        reqs_tx: mpsc::Sender<RequestChannel>,
     ) -> Result<(), RedisError> {
         let mut buf = [0u8; 512];
         loop {
@@ -139,66 +140,28 @@ impl Redis {
 
             debug!("Received {:?}", &buf[..bytes]);
             // Send request to the request handler
-            let (req, resp_rx) = Request::decode(&buf[..bytes])?;
-            let _ = reqs_tx.send(req).await;
+            let (req_ch, resp_rx) = RequestChannel::new(util::Request::decode(&buf[..bytes])?);
+            let _ = reqs_tx.send(req_ch).await;
 
             // Wair for response from the request handler, encode the response
             let resp = resp_rx.await.unwrap();
-            let mut write_buf = Vec::new();
-            let mut buf = Buffer::new(&mut write_buf);
-            resp.encode(&mut buf)?;
-
-            let count = buf.count;
-            let buf = &buf.inner[..count];
+            let buf = resp.encode()?;
 
             // Write encoded response to stream
-            debug!("Sending {:?}", buf);
-            stream.write(buf).await?;
+            debug!("Sending {:?}", &buf);
+            stream.write(&buf).await?;
         }
 
         Ok(())
     }
 
-    async fn handle_request(&mut self, req: Request) -> Result<(), RedisError> {
+    async fn handle_request(&mut self, req_ch: RequestChannel) -> Result<(), RedisError> {
         // Handle request and send back response via channel
-        let Request { cmd, tx } = req;
-        let resp: Response = self.handler.handle(cmd)?.into();
+        let RequestChannel { req, tx } = req_ch;
+        let cmd = req.as_command()?;
+        let resp: util::Response = self.handler.handle(cmd)?.into();
         let _ = tx.send(resp);
 
         Ok(())
-    }
-}
-
-fn generate_random_alphanumeric_string(len: usize) -> String {
-    rand::distributions::Alphanumeric.sample_string(&mut rand::thread_rng(), len)
-}
-
-/// Buffer is a wrapper for io::Write.
-struct Buffer<W> {
-    inner: W,
-    count: usize,
-}
-
-impl<W> Buffer<W>
-where
-    W: std::io::Write,
-{
-    fn new(inner: W) -> Self {
-        Self { inner, count: 0 }
-    }
-}
-
-impl<W> std::io::Write for Buffer<W>
-where
-    W: std::io::Write,
-{
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let len = self.inner.write(buf)?;
-        self.count += len;
-        Ok(len)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.inner.flush()
     }
 }
