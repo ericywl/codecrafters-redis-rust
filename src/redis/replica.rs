@@ -1,16 +1,20 @@
 use thiserror::Error;
-use tokio::{io::AsyncWriteExt, net::TcpStream};
+use tokio::net::TcpStream;
 
-use crate::util;
-
-use super::resp::{Array, EncodeError, Value};
+use super::{
+    resp::{Array, Value},
+    session::{Request, Response, Session, SessionError},
+};
 
 pub struct Replication {}
 
 #[derive(Debug, Error)]
 pub enum ReplicationError {
+    #[error("Unable to connect to master")]
+    CannotConnectMaster,
+
     #[error(transparent)]
-    Encode(#[from] EncodeError),
+    Session(#[from] SessionError),
 
     #[error(transparent)]
     TokioIo(#[from] tokio::io::Error),
@@ -24,15 +28,31 @@ impl Replication {
     }
 
     async fn connect_to_master(master_addr: String) -> Result<(), ReplicationError> {
-        let mut stream = TcpStream::connect(master_addr).await?;
+        let stream = TcpStream::connect(master_addr).await?;
+        let mut session = Session::new(stream);
 
         // First handshake
-        let request = Value::Array(Array::new(vec![Value::BulkString("PING".into())]));
-        let buf = util::encode_value(&request)?;
-        stream.write(&buf).await?;
+        let request: Request =
+            Value::Array(Array::new(vec![Value::BulkString("PING".into())])).into();
+        let response = session
+            .send_request_and_wait_reply(request)
+            .await?
+            .ok_or(ReplicationError::CannotConnectMaster)?;
+
+        // if !response_is_ok(response) {
+        //     return Err(ReplicationError::CannotConnectMaster);
+        // }
 
         // Second handshake
 
         Ok(())
+    }
+}
+
+fn response_is_ok(resp: Response) -> bool {
+    let value: Value = resp.into();
+    match value.simple_string() {
+        Some(s) => s.as_str() == "OK",
+        None => false,
     }
 }

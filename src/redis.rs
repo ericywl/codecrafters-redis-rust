@@ -2,15 +2,14 @@ pub mod cmd;
 pub mod cmd_handler;
 pub mod replica;
 pub mod resp;
+pub mod session;
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use thiserror::Error;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 use super::util;
 
@@ -18,15 +17,15 @@ use self::cmd::CommandError;
 use self::cmd_handler::HandleCommandError;
 use self::cmd_handler::{CommandHandler, CommandHandlerConfig};
 use self::replica::{Replication, ReplicationError};
-use self::resp::{DecodeError, EncodeError};
+use self::session::{Request, Response, Session, SessionError};
 
 struct RequestChannel {
-    req: util::Request,
-    tx: oneshot::Sender<util::Response>,
+    req: Request,
+    tx: oneshot::Sender<Response>,
 }
 
 impl RequestChannel {
-    fn new(req: util::Request) -> (Self, oneshot::Receiver<util::Response>) {
+    fn new(req: Request) -> (Self, oneshot::Receiver<Response>) {
         let (tx, rx) = oneshot::channel();
         (Self { req, tx }, rx)
     }
@@ -35,10 +34,7 @@ impl RequestChannel {
 #[derive(Debug, Error)]
 pub enum RedisError {
     #[error(transparent)]
-    Encode(#[from] EncodeError),
-
-    #[error(transparent)]
-    Decode(#[from] DecodeError),
+    Session(#[from] SessionError),
 
     #[error(transparent)]
     Command(#[from] CommandError),
@@ -99,7 +95,7 @@ impl Redis {
     }
 
     pub async fn start(mut self) -> Result<(), RedisError> {
-        let (reqs_tx, mut reqs_rx) = mpsc::channel(128);
+        let (reqs_ch_tx, mut reqs_ch_rx) = mpsc::channel(128);
 
         loop {
             tokio::select! {
@@ -107,9 +103,10 @@ impl Redis {
                 conn = self.listener.accept() => {
                     let (stream, addr) = conn?;
                     info!("Accepted new connection from {addr:?}");
-                    let reqs_tx = reqs_tx.clone();
+                    let reqs_ch_tx = reqs_ch_tx.clone();
+                    let session = Session::new(stream);
                     let _ = tokio::spawn(async move {
-                        match Self::handle_connection(stream, reqs_tx).await {
+                        match Self::handle_connection(session, reqs_ch_tx).await {
                             Ok(_) => (),
                             Err(e) => error!("Error handling connection: {e}"),
                         }
@@ -117,7 +114,7 @@ impl Redis {
                 }
 
                 // Handle request from connection
-                Some(req) = reqs_rx.recv() => {
+                Some(req) = reqs_ch_rx.recv() => {
                     match self.handle_request(req).await {
                         Ok(_) => (),
                         Err(e) => error!("Error handling request: {e}"),
@@ -128,28 +125,22 @@ impl Redis {
     }
 
     async fn handle_connection(
-        mut stream: TcpStream,
-        reqs_tx: mpsc::Sender<RequestChannel>,
+        mut session: Session,
+        reqs_ch_tx: mpsc::Sender<RequestChannel>,
     ) -> Result<(), RedisError> {
-        let mut buf = [0u8; 512];
         loop {
-            let bytes = stream.read(&mut buf).await?;
-            if bytes == 0 {
+            let req = session.receive_request().await?;
+            if req.is_none() {
                 break;
             }
 
-            debug!("Received {:?}", &buf[..bytes]);
             // Send request to the request handler
-            let (req_ch, resp_rx) = RequestChannel::new(util::Request::decode(&buf[..bytes])?);
-            let _ = reqs_tx.send(req_ch).await;
+            let (req_ch, resp_rx) = RequestChannel::new(req.unwrap());
+            let _ = reqs_ch_tx.send(req_ch).await;
 
-            // Wair for response from the request handler, encode the response
+            // Wait for response from the request handler and send it
             let resp = resp_rx.await.unwrap();
-            let buf = resp.encode()?;
-
-            // Write encoded response to stream
-            debug!("Sending {:?}", &buf);
-            stream.write(&buf).await?;
+            session.send_response(resp).await?;
         }
 
         Ok(())
@@ -159,7 +150,7 @@ impl Redis {
         // Handle request and send back response via channel
         let RequestChannel { req, tx } = req_ch;
         let cmd = req.as_command()?;
-        let resp: util::Response = self.handler.handle(cmd)?.into();
+        let resp: Response = self.handler.handle(cmd)?.into();
         let _ = tx.send(resp);
 
         Ok(())
