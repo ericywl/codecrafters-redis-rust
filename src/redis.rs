@@ -7,13 +7,13 @@ use std::sync::{Arc, RwLock};
 
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpStream, ToSocketAddrs};
+use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info};
 
 use self::cmd::{Command, CommandError};
-use self::cmd_handler::CommandHandler;
 use self::cmd_handler::HandleCommandError;
+use self::cmd_handler::{CommandHandler, CommandHandlerConfig};
 use self::resp::{EncodeError, Value};
 
 #[derive(Debug)]
@@ -68,12 +68,22 @@ pub struct Redis {
     handler: CommandHandler,
 }
 
+#[derive(Debug)]
+pub struct RedisConfig {
+    pub replica_addr: Option<String>,
+}
+
 impl Redis {
-    pub async fn new(addr: impl ToSocketAddrs) -> Result<Self, RedisError> {
+    pub async fn new(addr: String, config: RedisConfig) -> Result<Self, RedisError> {
         let listener = tokio::net::TcpListener::bind(addr).await?;
         Ok(Self {
             listener,
-            handler: CommandHandler::new(Arc::new(RwLock::new(HashMap::new()))),
+            handler: CommandHandler::new(
+                Arc::new(RwLock::new(HashMap::new())),
+                CommandHandlerConfig {
+                    is_replica: config.replica_addr.is_some(),
+                },
+            ),
         })
     }
 

@@ -52,21 +52,29 @@ impl EchoHandler {
 }
 
 #[derive(Debug)]
-struct InfoHandler;
+struct InfoHandler {
+    is_replica: bool,
+}
 
 impl InfoHandler {
-    fn new() -> Self {
-        Self
+    fn new(is_replica: bool) -> Self {
+        Self { is_replica }
     }
 
     /// Returns information and statistics about the server in a format that is simple to parse by computers and easy to read by humans.
     fn handle(&self, arg: InfoArg) -> Result<Value, HandleCommandError> {
-        let resp = match arg.section().to_owned() {
-            InfoSection::Replication => Value::BulkString(BulkString::from("role:master")),
+        match arg.section().to_owned() {
+            InfoSection::Replication => self.handle_replication(),
             InfoSection::Default => todo!(),
-        };
+        }
+    }
 
-        Ok(resp)
+    fn handle_replication(&self) -> Result<Value, HandleCommandError> {
+        if self.is_replica {
+            Ok(Value::BulkString(BulkString::from("role:slave")))
+        } else {
+            Ok(Value::BulkString(BulkString::from("role:master")))
+        }
     }
 }
 
@@ -172,11 +180,20 @@ impl StoredData {
 #[derive(Debug)]
 pub struct CommandHandler {
     map: Arc<RwLock<HashMap<BulkString, StoredData>>>,
+    config: CommandHandlerConfig,
+}
+
+#[derive(Debug)]
+pub struct CommandHandlerConfig {
+    pub is_replica: bool,
 }
 
 impl CommandHandler {
-    pub fn new(map: Arc<RwLock<HashMap<BulkString, StoredData>>>) -> Self {
-        Self { map }
+    pub fn new(
+        map: Arc<RwLock<HashMap<BulkString, StoredData>>>,
+        config: CommandHandlerConfig,
+    ) -> Self {
+        Self { map, config }
     }
 
     pub fn handle(&mut self, cmd: Command) -> Result<Value, HandleCommandError> {
@@ -184,7 +201,7 @@ impl CommandHandler {
         match cmd {
             Command::Ping(arg) => PingHandler::new().handle(arg),
             Command::Echo(arg) => EchoHandler::new().handle(arg),
-            Command::Info(arg) => InfoHandler::new().handle(arg),
+            Command::Info(arg) => InfoHandler::new(self.config.is_replica).handle(arg),
             // Clone Arc to increment reference count.
             Command::Set(arg) => SetHandler::new(self.map.clone()).handle(arg),
             Command::Get(arg) => GetHandler::new(self.map.clone()).handle(arg),
@@ -202,9 +219,13 @@ mod test {
         Arc::new(RwLock::new(HashMap::new()))
     }
 
+    fn new_cmd_handler() -> CommandHandler {
+        CommandHandler::new(new_hash_map(), CommandHandlerConfig { is_replica: false })
+    }
+
     #[test]
     fn ping() {
-        let mut handler = CommandHandler::new(new_hash_map());
+        let mut handler = new_cmd_handler();
         let resp = handler
             .handle(Command::Ping(PingArg::new(None)))
             .expect("Handle ping unexpected error");
@@ -214,7 +235,7 @@ mod test {
 
     #[test]
     fn ping_with_msg() {
-        let mut handler = CommandHandler::new(new_hash_map());
+        let mut handler = new_cmd_handler();
         let resp = handler
             .handle(Command::Ping(PingArg::new(Some(BulkString::from("WOOP")))))
             .expect("Handle ping unexpected error");
@@ -230,7 +251,7 @@ mod test {
 
     #[test]
     fn echo() {
-        let mut handler = CommandHandler::new(new_hash_map());
+        let mut handler = new_cmd_handler();
         let resp = handler
             .handle(Command::Echo(EchoArg::new(BulkString::from("Hello World"))))
             .expect("Handle echo unexpected error");
@@ -258,7 +279,7 @@ mod test {
 
     #[test]
     fn set_and_get() {
-        let mut handler = CommandHandler::new(new_hash_map());
+        let mut handler = new_cmd_handler();
 
         let key = "My Key";
         let value = "My Value";
@@ -276,7 +297,7 @@ mod test {
 
     #[test]
     fn set_expiry_and_get() {
-        let mut handler = CommandHandler::new(new_hash_map());
+        let mut handler = new_cmd_handler();
 
         let key = "My Key";
         let value = "My Value";
