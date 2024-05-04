@@ -54,11 +54,15 @@ impl EchoHandler {
 #[derive(Debug)]
 struct InfoHandler {
     is_replica: bool,
+    master_repl_id_and_offset: Option<(String, u64)>,
 }
 
 impl InfoHandler {
-    fn new(is_replica: bool) -> Self {
-        Self { is_replica }
+    fn new(is_replica: bool, master_repl_id_and_offset: Option<(String, u64)>) -> Self {
+        Self {
+            is_replica,
+            master_repl_id_and_offset,
+        }
     }
 
     /// Returns information and statistics about the server in a format that is simple to parse by computers and easy to read by humans.
@@ -73,7 +77,16 @@ impl InfoHandler {
         if self.is_replica {
             Ok(Value::BulkString(BulkString::from("role:slave")))
         } else {
-            Ok(Value::BulkString(BulkString::from("role:master")))
+            let mut info = vec!["role:master".to_string()];
+            if self.master_repl_id_and_offset.is_some() {
+                let m = self.master_repl_id_and_offset.clone().unwrap();
+                info.push(format!("master_replid:{}", m.0,));
+                info.push(format!("master_repl_offset:{}", m.1,));
+            }
+
+            Ok(Value::BulkString(BulkString::from(
+                info.join("\n").as_ref(),
+            )))
         }
     }
 }
@@ -186,6 +199,7 @@ pub struct CommandHandler {
 #[derive(Debug)]
 pub struct CommandHandlerConfig {
     pub is_replica: bool,
+    pub master_repl_id_and_offset: Option<(String, u64)>,
 }
 
 impl CommandHandler {
@@ -201,7 +215,11 @@ impl CommandHandler {
         match cmd {
             Command::Ping(arg) => PingHandler::new().handle(arg),
             Command::Echo(arg) => EchoHandler::new().handle(arg),
-            Command::Info(arg) => InfoHandler::new(self.config.is_replica).handle(arg),
+            Command::Info(arg) => InfoHandler::new(
+                self.config.is_replica,
+                self.config.master_repl_id_and_offset.clone(),
+            )
+            .handle(arg),
             // Clone Arc to increment reference count.
             Command::Set(arg) => SetHandler::new(self.map.clone()).handle(arg),
             Command::Get(arg) => GetHandler::new(self.map.clone()).handle(arg),
@@ -220,7 +238,13 @@ mod test {
     }
 
     fn new_cmd_handler() -> CommandHandler {
-        CommandHandler::new(new_hash_map(), CommandHandlerConfig { is_replica: false })
+        CommandHandler::new(
+            new_hash_map(),
+            CommandHandlerConfig {
+                is_replica: false,
+                master_repl_id_and_offset: None,
+            },
+        )
     }
 
     #[test]

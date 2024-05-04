@@ -5,6 +5,7 @@ pub mod resp;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use rand::distributions::DistString;
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -76,12 +77,21 @@ pub struct RedisConfig {
 impl Redis {
     pub async fn new(addr: String, config: RedisConfig) -> Result<Self, RedisError> {
         let listener = tokio::net::TcpListener::bind(addr).await?;
+
+        let is_replica = config.replica_addr.is_some();
+        let master_repl_id_and_offset = if !is_replica {
+            Some((generate_random_alphanumeric_string(40), 0))
+        } else {
+            None
+        };
+
         Ok(Self {
             listener,
             handler: CommandHandler::new(
                 Arc::new(RwLock::new(HashMap::new())),
                 CommandHandlerConfig {
-                    is_replica: config.replica_addr.is_some(),
+                    is_replica,
+                    master_repl_id_and_offset,
                 },
             ),
         })
@@ -157,6 +167,10 @@ impl Redis {
 
         Ok(())
     }
+}
+
+fn generate_random_alphanumeric_string(len: usize) -> String {
+    rand::distributions::Alphanumeric.sample_string(&mut rand::thread_rng(), len)
 }
 
 /// Buffer is a wrapper for io::Write.

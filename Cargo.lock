@@ -411,6 +411,7 @@ dependencies = [
  "derive_more",
  "enum_delegate",
  "logos",
+ "rand",
  "thiserror",
  "tokio",
  "tracing",
