@@ -8,7 +8,7 @@ use thiserror::Error;
 use tracing::info;
 
 use super::{
-    cmd::{Command, Echo, GetArg, InfoArg, InfoSection, Ping, SetArg},
+    cmd::{Command, Echo, GetArg, InfoArg, InfoSection, Ping, Set},
     resp::{BulkString, SimpleString, Value},
 };
 
@@ -52,43 +52,6 @@ impl InfoHandler {
                 info.join("\n").as_ref(),
             )))
         }
-    }
-}
-
-#[derive(Debug)]
-struct SetHandler {
-    map: Arc<RwLock<HashMap<BulkString, StoredData>>>,
-}
-
-impl SetHandler {
-    fn new(map: Arc<RwLock<HashMap<BulkString, StoredData>>>) -> Self {
-        Self { map }
-    }
-
-    /// Set key to hold the value.
-    /// If key already holds a value, it is overwritten.
-    /// Any previous time to live associated with the key is discarded on successful SET operation.
-    fn handle(&mut self, arg: SetArg) -> Result<Value, HandleCommandError> {
-        // Calculate deadline from expiry
-        let deadline = match arg.expiry() {
-            Some(expiry) => SystemTime::now().checked_add(*expiry),
-            None => None,
-        };
-        let data = StoredData {
-            value: arg.value().clone(),
-            deadline,
-        };
-
-        // Write lock and insert data
-        let mut map = self.map.write().expect("RwLock poisoned");
-        match map.entry(arg.key().clone()) {
-            Entry::Occupied(mut e) => *e.get_mut() = data,
-            Entry::Vacant(e) => {
-                e.insert(data);
-            }
-        };
-
-        Ok(Value::SimpleString(SimpleString::new("OK".into())))
     }
 }
 
@@ -141,15 +104,15 @@ impl GetHandler {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct StoredData {
-    value: BulkString,
-    deadline: Option<SystemTime>,
+    pub value: BulkString,
+    pub deadline: Option<SystemTime>,
 }
 
 impl StoredData {
     /// Returns true if there is a deadline and current time is greater than deadline.
-    fn has_expired(&self) -> bool {
+    pub fn has_expired(&self) -> bool {
         return self.deadline.is_some() && SystemTime::now().gt(&self.deadline.unwrap());
     }
 }
@@ -185,7 +148,7 @@ impl CommandHandler {
             )
             .handle(arg),
             // Clone Arc to increment reference count.
-            Command::Set(arg) => SetHandler::new(self.map.clone()).handle(arg),
+            Command::Set(arg) => Ok(Set::handler(self.map.clone()).handle(arg)),
             Command::Get(arg) => GetHandler::new(self.map.clone()).handle(arg),
         }
     }
@@ -195,6 +158,7 @@ impl CommandHandler {
 mod test {
     use std::{thread, time::Duration};
 
+    use super::super::cmd::SetArg;
     use super::*;
 
     fn new_hash_map() -> Arc<RwLock<HashMap<BulkString, StoredData>>> {
@@ -216,7 +180,11 @@ mod test {
         let value = BulkString::from(v);
 
         let resp = handler
-            .handle(Command::Set(SetArg::new(key, value, expiry.clone())))
+            .handle(Command::Set(SetArg {
+                key,
+                value,
+                expiry: expiry.clone(),
+            }))
             .expect("Handle set unexpected error");
         assert_eq!(resp, Value::SimpleString(SimpleString::from("OK")));
     }

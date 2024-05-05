@@ -1,6 +1,3 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use super::super::client::ClientError;
 use super::super::resp::{Array, BulkString, SimpleString, Value};
 use super::super::session::{Request, Responder, Response};
@@ -12,6 +9,7 @@ pub struct PingArg {
 }
 
 impl CommandArgParser for PingArg {
+    /// PING [msg]
     fn parse_arg(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, ParseCommandError> {
         let args = consume_args_from_iter(iter, 0, 1)?;
         let msg = args.get(0).map(|bs| bs.clone());

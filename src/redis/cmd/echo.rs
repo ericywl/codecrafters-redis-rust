@@ -1,6 +1,3 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use super::super::client::ClientError;
 use super::super::resp::{Array, BulkString, Value};
 use super::super::session::{Request, Responder, Response};
@@ -12,6 +9,7 @@ pub struct EchoArg {
 }
 
 impl CommandArgParser for EchoArg {
+    /// ECHO msg
     fn parse_arg(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, ParseCommandError> {
         let args = consume_args_from_iter(iter, 1, 0)?;
         let msg = args.get(0).unwrap().clone();

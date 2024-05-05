@@ -2,6 +2,8 @@ pub mod echo;
 pub use echo::*;
 pub mod ping;
 pub use ping::*;
+pub mod set;
+pub use set::*;
 
 use std::time::Duration;
 
@@ -51,54 +53,6 @@ impl InfoArg {
 
     pub fn section(&self) -> &InfoSection {
         &self.section
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct SetArg {
-    key: BulkString,
-    value: BulkString,
-    expiry: Option<Duration>,
-}
-
-impl SetArg {
-    pub fn new(key: BulkString, value: BulkString, expiry: Option<Duration>) -> Self {
-        Self { key, value, expiry }
-    }
-
-    fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, ParseCommandError> {
-        let args = consume_args_from_iter(iter, 2, 2)?;
-        let key = args.get(0).unwrap().clone();
-        let value = args.get(1).unwrap().clone();
-
-        let expiry = match args.get(2) {
-            Some(arg) => {
-                if bulk_string_to_string(arg)?.eq_ignore_ascii_case("px") {
-                    Some(Duration::from_millis(bulk_string_to_uint64(
-                        args.get(3).ok_or(ParseCommandError::WrongNumArgs)?,
-                    )?))
-                } else {
-                    return Err(ParseCommandError::InvalidArgument(Value::BulkString(
-                        arg.clone(),
-                    )));
-                }
-            }
-            None => None,
-        };
-
-        Ok(Self::new(key, value, expiry))
-    }
-
-    pub fn key(&self) -> &BulkString {
-        &self.key
-    }
-
-    pub fn value(&self) -> &BulkString {
-        &self.value
-    }
-
-    pub fn expiry(&self) -> Option<&Duration> {
-        self.expiry.as_ref()
     }
 }
 
@@ -252,7 +206,7 @@ impl TryFrom<Value> for Command {
         match cmd.to_lowercase().as_str() {
             "ping" => Ok(Self::Ping(PingArg::parse_arg(&mut iter)?)),
             "echo" => Ok(Self::Echo(EchoArg::parse_arg(&mut iter)?)),
-            "set" => Ok(Self::Set(SetArg::parse(&mut iter)?)),
+            "set" => Ok(Self::Set(SetArg::parse_arg(&mut iter)?)),
             "get" => Ok(Self::Get(GetArg::parse(&mut iter)?)),
             "info" => Ok(Self::Info(InfoArg::parse(&mut iter)?)),
             _ => Err(ParseCommandError::InvalidCommand),
