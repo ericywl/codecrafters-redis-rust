@@ -49,12 +49,29 @@ impl CommandArgParser for SetArg {
 pub struct Set;
 
 impl Set {
+    /// Returns an instance of SET client.
     pub fn client() -> SetClient {
         todo!()
     }
 
+    /// Returns an instance of SET command handler.
     pub fn handler(map: Arc<RwLock<HashMap<BulkString, StoredData>>>) -> SetHandler {
         SetHandler { map }
+    }
+
+    /// Returns SET as a Command in the form of Value.
+    pub fn command_value(arg: SetArg) -> Value {
+        let mut parts = vec![
+            Value::BulkString("SET".into()),
+            Value::BulkString(arg.key),
+            Value::BulkString(arg.value),
+        ];
+        if arg.expiry.is_some() {
+            let expiry = arg.expiry.unwrap().as_millis().to_string();
+            parts.push(Value::BulkString("px".into()));
+            parts.push(Value::BulkString(expiry.into()));
+        }
+        Value::Array(Array::new(parts))
     }
 }
 
@@ -90,6 +107,31 @@ impl SetHandler {
         };
 
         Value::SimpleString(SimpleString::new("OK".into()))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn command() {
+        let val = Set::command_value(SetArg {
+            key: "key".into(),
+            value: "value".into(),
+            expiry: Some(Duration::from_millis(200)),
+        });
+
+        assert_eq!(
+            val.array().unwrap().values().unwrap().to_vec(),
+            vec![
+                Value::BulkString("SET".into()),
+                Value::BulkString("key".into()),
+                Value::BulkString("value".into()),
+                Value::BulkString("px".into()),
+                Value::BulkString("200".into()),
+            ]
+        )
     }
 }
 

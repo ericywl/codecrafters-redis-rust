@@ -4,8 +4,8 @@ pub mod ping;
 pub use ping::*;
 pub mod set;
 pub use set::*;
-
-use std::time::Duration;
+pub mod get;
+pub use get::*;
 
 use thiserror::Error;
 
@@ -53,28 +53,6 @@ impl InfoArg {
 
     pub fn section(&self) -> &InfoSection {
         &self.section
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct GetArg {
-    key: BulkString,
-}
-
-impl GetArg {
-    pub fn new(key: BulkString) -> Self {
-        Self { key }
-    }
-
-    pub fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, ParseCommandError> {
-        let args = consume_args_from_iter(iter, 1, 0)?;
-        let key = args.get(0).unwrap().clone();
-
-        Ok(Self::new(key))
-    }
-
-    pub fn key(&self) -> &BulkString {
-        &self.key
     }
 }
 
@@ -128,19 +106,10 @@ fn consume_args_from_iter(
 /// Available commands for Redis.
 #[derive(Debug, Clone)]
 pub enum Command {
-    /// PING [msg]
     Ping(PingArg),
-
-    /// ECHO msg
     Echo(EchoArg),
-
-    /// INFO
     Info(InfoArg),
-
-    /// SET key value [PX milliseconds]
     Set(SetArg),
-
-    /// GET key
     Get(GetArg),
 }
 
@@ -207,7 +176,7 @@ impl TryFrom<Value> for Command {
             "ping" => Ok(Self::Ping(PingArg::parse_arg(&mut iter)?)),
             "echo" => Ok(Self::Echo(EchoArg::parse_arg(&mut iter)?)),
             "set" => Ok(Self::Set(SetArg::parse_arg(&mut iter)?)),
-            "get" => Ok(Self::Get(GetArg::parse(&mut iter)?)),
+            "get" => Ok(Self::Get(GetArg::parse_arg(&mut iter)?)),
             "info" => Ok(Self::Info(InfoArg::parse(&mut iter)?)),
             _ => Err(ParseCommandError::InvalidCommand),
         }

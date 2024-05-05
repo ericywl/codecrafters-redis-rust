@@ -94,6 +94,26 @@ impl PingHandler {
 }
 
 #[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn command() {
+        let val = Ping::command_value(PingArg {
+            msg: Some("hello".into()),
+        });
+
+        assert_eq!(
+            val.array().unwrap().values().unwrap().to_vec(),
+            vec![
+                Value::BulkString("PING".into()),
+                Value::BulkString("hello".into()),
+            ]
+        )
+    }
+}
+
+#[cfg(test)]
 mod client_test {
     use super::super::super::session::MockResponder;
     use super::*;

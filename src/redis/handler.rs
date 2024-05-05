@@ -8,7 +8,7 @@ use thiserror::Error;
 use tracing::info;
 
 use super::{
-    cmd::{Command, Echo, GetArg, InfoArg, InfoSection, Ping, Set},
+    cmd::{Command, Echo, Get, InfoArg, InfoSection, Ping, Set},
     resp::{BulkString, SimpleString, Value},
 };
 
@@ -52,55 +52,6 @@ impl InfoHandler {
                 info.join("\n").as_ref(),
             )))
         }
-    }
-}
-
-#[derive(Debug)]
-struct GetHandler {
-    map: Arc<RwLock<HashMap<BulkString, StoredData>>>,
-}
-
-impl GetHandler {
-    fn new(map: Arc<RwLock<HashMap<BulkString, StoredData>>>) -> Self {
-        Self { map }
-    }
-
-    /// Get the value of key.
-    /// If the key does not exist the special value nil is returned.
-    ///
-    /// On getting a key, if the value stored in the key has expired, it will be removed.
-    /// TODO: Implement active expiry on-top of this passive one.
-    fn handle(&mut self, arg: GetArg) -> Result<Value, HandleCommandError> {
-        // Read lock to access data.
-        let read_map = self.map.read().expect("RwLock poisoned");
-        // Clone the data.
-        let data = match read_map.get(arg.key()) {
-            Some(data) => data.clone(),
-            None => return Ok(Value::BulkString(BulkString::null())),
-        };
-
-        // Unlock, since we already have the cloned data.
-        drop(read_map);
-
-        // No deadline or deadline haven't reached yet.
-        if !data.has_expired() {
-            return Ok(Value::BulkString(data.value));
-        }
-
-        // Deadline passed, we should clear the entry.
-        // Write lock and test that entry is still expired. We need to test it again since
-        // the entry could have been overwritten by the time we acquire write lock.
-        let mut write_map = self.map.write().expect("RwLock poisonsed");
-        match write_map.entry(arg.key().clone()) {
-            Entry::Occupied(e) => {
-                if e.get().has_expired() {
-                    e.remove();
-                }
-            }
-            Entry::Vacant(_) => (),
-        };
-
-        Ok(Value::BulkString(BulkString::null()))
     }
 }
 
@@ -149,7 +100,7 @@ impl CommandHandler {
             .handle(arg),
             // Clone Arc to increment reference count.
             Command::Set(arg) => Ok(Set::handler(self.map.clone()).handle(arg)),
-            Command::Get(arg) => GetHandler::new(self.map.clone()).handle(arg),
+            Command::Get(arg) => Ok(Get::handler(self.map.clone()).handle(arg)),
         }
     }
 }
@@ -158,7 +109,7 @@ impl CommandHandler {
 mod test {
     use std::{thread, time::Duration};
 
-    use super::super::cmd::SetArg;
+    use super::super::cmd::{GetArg, SetArg};
     use super::*;
 
     fn new_hash_map() -> Arc<RwLock<HashMap<BulkString, StoredData>>> {
@@ -193,7 +144,7 @@ mod test {
         let key = BulkString::from(k);
 
         handler
-            .handle(Command::Get(GetArg::new(key)))
+            .handle(Command::Get(GetArg { key }))
             .expect("Handle get unexpected error")
     }
 

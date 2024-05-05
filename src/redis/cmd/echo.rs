@@ -79,6 +79,26 @@ impl EchoHandler {
 }
 
 #[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn command() {
+        let val = Echo::command_value(EchoArg {
+            msg: "hello".into(),
+        });
+
+        assert_eq!(
+            val.array().unwrap().values().unwrap().to_vec(),
+            vec![
+                Value::BulkString("ECHO".into()),
+                Value::BulkString("hello".into())
+            ]
+        )
+    }
+}
+
+#[cfg(test)]
 mod client_test {
     use super::super::super::session::MockResponder;
     use super::*;

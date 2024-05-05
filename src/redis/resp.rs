@@ -298,6 +298,12 @@ impl From<&str> for BulkString {
     }
 }
 
+impl From<String> for BulkString {
+    fn from(s: String) -> Self {
+        Self::new(s.as_bytes().to_vec())
+    }
+}
+
 impl FromStr for BulkString {
     type Err = ();
     fn from_str(s: &str) -> Result<Self, Self::Err> {
