@@ -1,30 +1,12 @@
+pub mod ping;
+
 use std::time::Duration;
 
 use thiserror::Error;
 
-use super::resp::{BulkString, DecodeError, Value};
+use self::ping::PingArg;
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct PingArg {
-    msg: Option<BulkString>,
-}
-
-impl PingArg {
-    pub fn new(msg: Option<BulkString>) -> Self {
-        Self { msg }
-    }
-
-    fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, CommandError> {
-        let args = consume_args_from_iter(iter, 0, 1)?;
-        let msg = args.get(0).map(|bs| bs.clone());
-
-        Ok(PingArg::new(msg))
-    }
-
-    pub fn msg(&self) -> Option<&BulkString> {
-        self.msg.as_ref()
-    }
-}
+use super::resp::{Array, BulkString, DecodeError, Value};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct EchoArg {
@@ -282,6 +264,21 @@ impl TryFrom<Value> for Command {
             "get" => Ok(Self::Get(GetArg::parse(&mut iter)?)),
             "info" => Ok(Self::Info(InfoArg::parse(&mut iter)?)),
             _ => Err(CommandError::InvalidCommand),
+        }
+    }
+}
+
+impl Into<Value> for Command {
+    fn into(self) -> Value {
+        match self {
+            Command::Ping(arg) => {
+                let mut parts = vec![Value::BulkString("PING".into())];
+                if arg.msg.is_some() {
+                    parts.push(Value::BulkString(arg.msg.unwrap()));
+                }
+                Value::Array(Array::new(parts))
+            }
+            _ => todo!(),
         }
     }
 }

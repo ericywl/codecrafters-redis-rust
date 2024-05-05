@@ -8,34 +8,12 @@ use thiserror::Error;
 use tracing::info;
 
 use super::{
-    cmd::{Command, EchoArg, GetArg, InfoArg, InfoSection, PingArg, SetArg},
-    resp::{Array, BulkString, SimpleString, Value},
+    cmd::{ping::Ping, Command, EchoArg, GetArg, InfoArg, InfoSection, SetArg},
+    resp::{BulkString, SimpleString, Value},
 };
 
 #[derive(Debug, Error)]
 pub enum HandleCommandError {}
-
-#[derive(Debug)]
-struct PingHandler;
-
-impl PingHandler {
-    fn new() -> Self {
-        Self
-    }
-
-    /// Returns PONG if no argument is provided.
-    /// Otherwise returns a copy of the argument.
-    fn handle(&self, arg: PingArg) -> Result<Value, HandleCommandError> {
-        if let Some(msg) = arg.msg() {
-            Ok(Value::Array(Array::new(vec![
-                Value::BulkString(BulkString::new(b"PONG".to_vec())),
-                Value::BulkString(msg.clone()),
-            ])))
-        } else {
-            Ok(Value::SimpleString(SimpleString::new("PONG".into())))
-        }
-    }
-}
 
 #[derive(Debug)]
 struct EchoHandler;
@@ -213,7 +191,7 @@ impl CommandHandler {
     pub fn handle(&mut self, cmd: Command) -> Result<Value, HandleCommandError> {
         info!("Handling command {cmd:?}");
         match cmd {
-            Command::Ping(arg) => PingHandler::new().handle(arg),
+            Command::Ping(arg) => Ok(Ping::handler().handle(arg)),
             Command::Echo(arg) => EchoHandler::new().handle(arg),
             Command::Info(arg) => InfoHandler::new(
                 self.config.is_replica,
@@ -245,32 +223,6 @@ mod test {
                 master_repl_id_and_offset: None,
             },
         )
-    }
-
-    #[test]
-    fn ping() {
-        let mut handler = new_cmd_handler();
-        let resp = handler
-            .handle(Command::Ping(PingArg::new(None)))
-            .expect("Handle ping unexpected error");
-
-        assert_eq!(resp, Value::SimpleString("PONG".into()));
-    }
-
-    #[test]
-    fn ping_with_msg() {
-        let mut handler = new_cmd_handler();
-        let resp = handler
-            .handle(Command::Ping(PingArg::new(Some(BulkString::from("WOOP")))))
-            .expect("Handle ping unexpected error");
-
-        assert_eq!(
-            resp,
-            Value::Array(Array::new(vec![
-                Value::BulkString("PONG".into()),
-                Value::BulkString("WOOP".into())
-            ]))
-        );
     }
 
     #[test]

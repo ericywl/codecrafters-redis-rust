@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use thiserror::Error;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -12,10 +13,14 @@ use super::{
     resp::{DecodeError, EncodeError, Value},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request(Value);
 
 impl Request {
+    pub fn new(value: Value) -> Self {
+        Self(value)
+    }
+
     pub fn decode(buf: &[u8]) -> Result<Self, DecodeError> {
         Ok(Self(Value::decode(buf)?))
     }
@@ -41,10 +46,14 @@ impl Into<Value> for Request {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response(Value);
 
 impl Response {
+    pub fn new(value: Value) -> Self {
+        Self(value)
+    }
+
     pub fn decode(buf: &[u8]) -> Result<Self, DecodeError> {
         Ok(Self(Value::decode(buf)?))
     }
@@ -73,6 +82,11 @@ fn encode_value(val: &Value) -> Result<Vec<u8>, EncodeError> {
 
     let count = buf.count;
     Ok(buf.inner[..count].to_vec())
+}
+
+#[async_trait]
+pub trait Responder {
+    async fn respond(&self, req: Request) -> Result<Response, SessionError>;
 }
 
 #[derive(Debug)]
@@ -130,4 +144,13 @@ impl Session {
 
         Ok(Some(Response::decode(&buf[..bytes_read])?))
     }
+}
+
+pub fn response_is_simple_string(resp: Response, expected: &str) -> bool {
+    response_is(resp, Value::SimpleString(expected.into()))
+}
+
+pub fn response_is(resp: Response, expected: Value) -> bool {
+    let value: Value = resp.into();
+    value == expected
 }

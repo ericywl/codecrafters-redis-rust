@@ -2,7 +2,8 @@ use thiserror::Error;
 use tokio::net::TcpStream;
 
 use super::{
-    resp::{Array, Value},
+    cmd::{ping::PingArg, Command},
+    resp::Value,
     session::{Request, Response, Session, SessionError},
 };
 
@@ -32,27 +33,29 @@ impl Replication {
         let mut session = Session::new(stream);
 
         // First handshake
-        let request: Request =
-            Value::Array(Array::new(vec![Value::BulkString("PING".into())])).into();
+        // PING
+        let cmd_value: Value = Command::Ping(PingArg { msg: None }).into();
+        let request: Request = cmd_value.into();
         let response = session
             .send_request_and_wait_reply(request)
             .await?
             .ok_or(ReplicationError::CannotConnectMaster)?;
 
-        // if !response_is_ok(response) {
-        //     return Err(ReplicationError::CannotConnectMaster);
-        // }
+        if !response_is(response, "PONG") {
+            return Err(ReplicationError::CannotConnectMaster);
+        }
 
         // Second handshake
+        // REPLCONF listening-port <PORT>
 
         Ok(())
     }
 }
 
-fn response_is_ok(resp: Response) -> bool {
+fn response_is(resp: Response, expected: &str) -> bool {
     let value: Value = resp.into();
     match value.simple_string() {
-        Some(s) => s.as_str() == "OK",
+        Some(s) => s.as_str() == expected,
         None => false,
     }
 }
