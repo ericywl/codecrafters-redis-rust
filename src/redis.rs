@@ -1,5 +1,6 @@
+pub mod client;
 pub mod cmd;
-pub mod cmd_handler;
+pub mod handler;
 pub mod replica;
 pub mod resp;
 pub mod session;
@@ -13,9 +14,9 @@ use tracing::{error, info};
 
 use super::util;
 
-use self::cmd::CommandError;
-use self::cmd_handler::HandleCommandError;
-use self::cmd_handler::{CommandHandler, CommandHandlerConfig};
+use self::cmd::ParseCommandError;
+use self::handler::HandleCommandError;
+use self::handler::{CommandHandler, CommandHandlerConfig};
 use self::replica::{Replication, ReplicationError};
 use self::session::{Request, Response, Session, SessionError};
 
@@ -37,7 +38,7 @@ pub enum RedisError {
     Session(#[from] SessionError),
 
     #[error(transparent)]
-    Command(#[from] CommandError),
+    Command(#[from] ParseCommandError),
 
     #[error(transparent)]
     HandleCommand(#[from] HandleCommandError),

@@ -1,20 +1,18 @@
-use thiserror::Error;
+use std::cell::RefCell;
+use std::rc::Rc;
 
-use crate::redis::session::response_is;
-
+use super::super::client::ClientError;
 use super::super::resp::{Array, BulkString, SimpleString, Value};
-use super::super::session::{
-    response_is_simple_string, Request, Responder, Response, SessionError,
-};
-use super::{consume_args_from_iter, CommandError};
+use super::super::session::{Request, Responder, Response};
+use super::{consume_args_from_iter, CommandArgParser, ParseCommandError};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct PingArg {
     pub msg: Option<BulkString>,
 }
 
-impl PingArg {
-    pub fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, CommandError> {
+impl CommandArgParser for PingArg {
+    fn parse_arg(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, ParseCommandError> {
         let args = consume_args_from_iter(iter, 0, 1)?;
         let msg = args.get(0).map(|bs| bs.clone());
 
@@ -25,14 +23,20 @@ impl PingArg {
 pub struct Ping;
 
 impl Ping {
-    pub fn client(responder: Box<dyn Responder>) -> PingClient {
+    /// Returns an instance of PING client.
+    pub fn client<'a, T>(responder: &'a mut T) -> PingClient<'a, T>
+    where
+        T: Responder,
+    {
         PingClient { responder }
     }
 
+    /// Returns an instance of PING command handler.
     pub fn handler() -> PingHandler {
         PingHandler {}
     }
 
+    /// Returns PING as a Command in the form of Value.
     pub fn command_value(arg: PingArg) -> Value {
         let mut parts = vec![Value::BulkString("PING".into())];
         if arg.msg.is_some() {
@@ -42,44 +46,35 @@ impl Ping {
     }
 }
 
-#[derive(Debug, Error)]
-pub enum PingClientError {
-    #[error("PONG not returned from server")]
-    PongNotReturned,
-
-    #[error(transparent)]
-    Session(#[from] SessionError),
+pub struct PingClient<'a, T: Responder> {
+    responder: &'a mut T,
 }
 
-pub struct PingClient {
-    responder: Box<dyn Responder>,
-}
-
-impl PingClient {
-    pub async fn ping(&self, arg: PingArg) -> Result<(), PingClientError> {
+impl<'a, T> PingClient<'a, T>
+where
+    T: Responder,
+{
+    /// Sends PING command to the responder.
+    /// If `arg` contains a message, it will expect responder to reply with `PONG msg` as array of BulkStrings.
+    /// Otherwise, it will expect responder to reply with just `PONG` as SimpleString.
+    pub async fn ping(&mut self, arg: PingArg) -> Result<Response, ClientError> {
         let request: Request = Ping::command_value(arg.clone()).into();
         let response = self.responder.respond(request).await?;
 
         match arg.msg {
             Some(msg) => {
-                if !response_is(
-                    response,
-                    Value::Array(Array::new(vec![
-                        Value::BulkString("PONG".into()),
-                        Value::BulkString(msg.clone()),
-                    ])),
-                ) {
-                    return Err(PingClientError::PongNotReturned);
+                if !response.is_bulk_string_array(vec!["PONG".into(), msg.clone()]) {
+                    return Err(ClientError::InvalidResponse);
                 }
             }
             None => {
-                if !response_is_simple_string(response, "PONG") {
-                    return Err(PingClientError::PongNotReturned);
+                if !response.is_simple_string("PONG") {
+                    return Err(ClientError::InvalidResponse);
                 }
             }
         }
 
-        Ok(())
+        Ok(response)
     }
 }
 
@@ -102,44 +97,67 @@ impl PingHandler {
 
 #[cfg(test)]
 mod client_test {
-    use async_trait::async_trait;
-
+    use super::super::super::session::MockResponder;
     use super::*;
 
-    struct MockResponder {
-        expected_req: Request,
-        returned_resp: Response,
-    }
-
-    #[async_trait]
-    impl Responder for MockResponder {
-        async fn respond(&self, req: Request) -> Result<Response, SessionError> {
-            assert_eq!(req, self.expected_req);
-            Ok(self.returned_resp.clone())
+    fn new_ping_responder(
+        expected_msg: Option<BulkString>,
+        returned_value: Value,
+    ) -> MockResponder {
+        let mut values = vec![Value::BulkString("PING".into())];
+        if expected_msg.is_some() {
+            values.push(Value::BulkString(expected_msg.unwrap()))
         }
-    }
+        let expected_req = Request::new(Value::Array(Array::new(values)));
 
-    fn new_ping_client(expected_req: Request, returned_resp: Response) -> PingClient {
-        let responder = MockResponder {
+        MockResponder {
             expected_req,
-            returned_resp,
-        };
-        Ping::client(Box::new(responder))
+            returned_resp: returned_value.into(),
+        }
     }
 
     #[tokio::test]
     async fn ping() {
-        let client = new_ping_client(
-            Request::new(Value::Array(Array::new(vec![Value::BulkString(
-                "PING".into(),
-            )]))),
-            Response::new(Value::SimpleString("PONG".into())),
-        );
+        let mut responder = new_ping_responder(None, Value::SimpleString("PONG".into()));
+        let mut client = Ping::client(&mut responder);
 
         client
             .ping(PingArg { msg: None })
             .await
             .expect("Unexpected ping error");
+    }
+
+    #[tokio::test]
+    async fn ping_with_msg() {
+        let msg: BulkString = "Hello".into();
+
+        let mut responder = new_ping_responder(
+            Some(msg.clone()),
+            Value::Array(
+                vec![
+                    Value::BulkString("PONG".into()),
+                    Value::BulkString(msg.clone()),
+                ]
+                .into(),
+            ),
+        );
+        let mut client = Ping::client(&mut responder);
+
+        client
+            .ping(PingArg { msg: Some(msg) })
+            .await
+            .expect("Unexpected ping error");
+    }
+
+    #[tokio::test]
+    async fn ping_wrong_response() {
+        let mut responder = new_ping_responder(None, Value::SimpleString("Hello".into()));
+        let mut client = Ping::client(&mut responder);
+
+        match client.ping(PingArg { msg: None }).await {
+            Ok(_) => panic!("Should have error"),
+            Err(e) => assert!(matches!(e, ClientError::InvalidResponse)),
+        }
     }
 }
 

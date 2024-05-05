@@ -8,26 +8,12 @@ use thiserror::Error;
 use tracing::info;
 
 use super::{
-    cmd::{ping::Ping, Command, EchoArg, GetArg, InfoArg, InfoSection, SetArg},
+    cmd::{Command, Echo, GetArg, InfoArg, InfoSection, Ping, SetArg},
     resp::{BulkString, SimpleString, Value},
 };
 
 #[derive(Debug, Error)]
 pub enum HandleCommandError {}
-
-#[derive(Debug)]
-struct EchoHandler;
-
-impl EchoHandler {
-    fn new() -> Self {
-        Self
-    }
-
-    /// Returns message.
-    fn handle(&self, arg: EchoArg) -> Result<Value, HandleCommandError> {
-        Ok(Value::BulkString(arg.msg().clone()))
-    }
-}
 
 #[derive(Debug)]
 struct InfoHandler {
@@ -192,7 +178,7 @@ impl CommandHandler {
         info!("Handling command {cmd:?}");
         match cmd {
             Command::Ping(arg) => Ok(Ping::handler().handle(arg)),
-            Command::Echo(arg) => EchoHandler::new().handle(arg),
+            Command::Echo(arg) => Ok(Echo::handler().handle(arg)),
             Command::Info(arg) => InfoHandler::new(
                 self.config.is_replica,
                 self.config.master_repl_id_and_offset.clone(),
@@ -223,16 +209,6 @@ mod test {
                 master_repl_id_and_offset: None,
             },
         )
-    }
-
-    #[test]
-    fn echo() {
-        let mut handler = new_cmd_handler();
-        let resp = handler
-            .handle(Command::Echo(EchoArg::new(BulkString::from("Hello World"))))
-            .expect("Handle echo unexpected error");
-
-        assert_eq!(resp, Value::BulkString("Hello World".into()))
     }
 
     fn simple_set(handler: &mut CommandHandler, k: &str, v: &str, expiry: Option<Duration>) {

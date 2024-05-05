@@ -6,11 +6,10 @@ use tokio::{
 };
 use tracing::debug;
 
-use crate::util;
-
 use super::{
-    cmd::{Command, CommandError},
-    resp::{DecodeError, EncodeError, Value},
+    cmd::{Command, ParseCommandError},
+    resp::{Array, BulkString, DecodeError, EncodeError, Value},
+    util,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,7 +28,7 @@ impl Request {
         encode_value(&self.0)
     }
 
-    pub fn as_command(&self) -> Result<Command, CommandError> {
+    pub fn as_command(&self) -> Result<Command, ParseCommandError> {
         Command::try_from(self.0.clone())
     }
 }
@@ -61,6 +60,27 @@ impl Response {
     pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
         encode_value(&self.0)
     }
+
+    pub fn is(&self, expected: Value) -> bool {
+        self.0 == expected
+    }
+
+    pub fn is_simple_string(&self, expected: &str) -> bool {
+        self.is(Value::SimpleString(expected.into()))
+    }
+
+    pub fn is_bulk_string(&self, expected: &[u8]) -> bool {
+        self.is(Value::BulkString(expected.to_vec().into()))
+    }
+
+    pub fn is_bulk_string_array(&self, bulk_strings: Vec<BulkString>) -> bool {
+        let values = bulk_strings
+            .iter()
+            .map(|bs| Value::BulkString(bs.clone()))
+            .collect();
+
+        self.is(Value::Array(Array::new(values)))
+    }
 }
 
 impl From<Value> for Response {
@@ -86,7 +106,7 @@ fn encode_value(val: &Value) -> Result<Vec<u8>, EncodeError> {
 
 #[async_trait]
 pub trait Responder {
-    async fn respond(&self, req: Request) -> Result<Response, SessionError>;
+    async fn respond(&mut self, req: Request) -> Result<Response, SessionError>;
 }
 
 #[derive(Debug)]
@@ -96,6 +116,9 @@ pub struct Session {
 
 #[derive(Debug, Error)]
 pub enum SessionError {
+    #[error("No response from session")]
+    NoResponse,
+
     #[error(transparent)]
     Encode(#[from] EncodeError),
 
@@ -132,25 +155,38 @@ impl Session {
     pub async fn send_request_and_wait_reply(
         &mut self,
         req: Request,
-    ) -> Result<Option<Response>, SessionError> {
+    ) -> Result<Response, SessionError> {
         let buf = req.encode()?;
         self.stream.write(&buf).await?;
 
         let mut buf = [0u8; 512];
         let bytes_read = self.stream.read(&mut buf).await?;
         if bytes_read == 0 {
-            return Ok(None);
+            return Err(SessionError::NoResponse);
         }
 
-        Ok(Some(Response::decode(&buf[..bytes_read])?))
+        Ok(Response::decode(&buf[..bytes_read])?)
     }
 }
 
-pub fn response_is_simple_string(resp: Response, expected: &str) -> bool {
-    response_is(resp, Value::SimpleString(expected.into()))
+#[async_trait]
+impl Responder for Session {
+    async fn respond(&mut self, req: Request) -> Result<Response, SessionError> {
+        Ok(self.send_request_and_wait_reply(req).await?)
+    }
 }
 
-pub fn response_is(resp: Response, expected: Value) -> bool {
-    let value: Value = resp.into();
-    value == expected
+#[cfg(test)]
+pub struct MockResponder {
+    pub expected_req: Request,
+    pub returned_resp: Response,
+}
+
+#[cfg(test)]
+#[async_trait]
+impl Responder for MockResponder {
+    async fn respond(&mut self, req: Request) -> Result<Response, SessionError> {
+        assert_eq!(req, self.expected_req);
+        Ok(self.returned_resp.clone())
+    }
 }

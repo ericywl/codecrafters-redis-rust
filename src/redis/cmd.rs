@@ -1,34 +1,13 @@
+pub mod echo;
+pub use echo::*;
 pub mod ping;
+pub use ping::*;
 
 use std::time::Duration;
 
 use thiserror::Error;
 
-use self::ping::PingArg;
-
 use super::resp::{Array, BulkString, DecodeError, Value};
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct EchoArg {
-    msg: BulkString,
-}
-
-impl EchoArg {
-    pub fn new(msg: BulkString) -> Self {
-        Self { msg }
-    }
-
-    fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, CommandError> {
-        let args = consume_args_from_iter(iter, 1, 0)?;
-        let msg = args.get(0).unwrap().clone();
-
-        Ok(Self::new(msg))
-    }
-
-    pub fn msg(&self) -> &BulkString {
-        &self.msg
-    }
-}
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct InfoArg {
@@ -46,18 +25,21 @@ impl InfoArg {
         Self { section }
     }
 
-    fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, CommandError> {
+    fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, ParseCommandError> {
         let args = consume_args_from_iter(iter, 0, 1)?;
         let section = Self::parse_info_section(args.get(0))?;
 
         Ok(Self::new(section))
     }
 
-    fn parse_info_section(opt_bs: Option<&BulkString>) -> Result<InfoSection, CommandError> {
+    fn parse_info_section(opt_bs: Option<&BulkString>) -> Result<InfoSection, ParseCommandError> {
         let section_str = match opt_bs {
-            Some(bs) => bs
-                .as_str()
-                .ok_or(CommandError::InvalidArgument(Value::BulkString(bs.clone())))?,
+            Some(bs) => {
+                bs.as_str()
+                    .ok_or(ParseCommandError::InvalidArgument(Value::BulkString(
+                        bs.clone(),
+                    )))?
+            }
             None => "".to_string(),
         };
 
@@ -84,7 +66,7 @@ impl SetArg {
         Self { key, value, expiry }
     }
 
-    fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, CommandError> {
+    fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, ParseCommandError> {
         let args = consume_args_from_iter(iter, 2, 2)?;
         let key = args.get(0).unwrap().clone();
         let value = args.get(1).unwrap().clone();
@@ -93,10 +75,10 @@ impl SetArg {
             Some(arg) => {
                 if bulk_string_to_string(arg)?.eq_ignore_ascii_case("px") {
                     Some(Duration::from_millis(bulk_string_to_uint64(
-                        args.get(3).ok_or(CommandError::WrongNumArgs)?,
+                        args.get(3).ok_or(ParseCommandError::WrongNumArgs)?,
                     )?))
                 } else {
-                    return Err(CommandError::InvalidArgument(Value::BulkString(
+                    return Err(ParseCommandError::InvalidArgument(Value::BulkString(
                         arg.clone(),
                     )));
                 }
@@ -130,7 +112,7 @@ impl GetArg {
         Self { key }
     }
 
-    pub fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, CommandError> {
+    pub fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, ParseCommandError> {
         let args = consume_args_from_iter(iter, 1, 0)?;
         let key = args.get(0).unwrap().clone();
 
@@ -142,20 +124,22 @@ impl GetArg {
     }
 }
 
-fn bulk_string_to_uint64(bs: &BulkString) -> Result<u64, CommandError> {
+fn bulk_string_to_uint64(bs: &BulkString) -> Result<u64, ParseCommandError> {
     let s = bulk_string_to_string(bs)?;
     Ok(s.parse::<u64>().map_err(|e| DecodeError::ParseInt(e))?)
 }
 
-fn bulk_string_to_string(bs: &BulkString) -> Result<String, CommandError> {
+fn bulk_string_to_string(bs: &BulkString) -> Result<String, ParseCommandError> {
     bs.as_str()
-        .ok_or(CommandError::InvalidArgument(Value::BulkString(bs.clone())))
+        .ok_or(ParseCommandError::InvalidArgument(Value::BulkString(
+            bs.clone(),
+        )))
 }
 
-fn value_to_bulk_string(val: &Value) -> Result<BulkString, CommandError> {
+fn value_to_bulk_string(val: &Value) -> Result<BulkString, ParseCommandError> {
     Ok(val
         .bulk_string()
-        .ok_or(CommandError::InvalidArgument(val.clone()))?
+        .ok_or(ParseCommandError::InvalidArgument(val.clone()))?
         .clone())
 }
 
@@ -163,11 +147,11 @@ fn consume_args_from_iter(
     iter: &mut std::slice::Iter<'_, Value>,
     necessary: usize,
     optional: usize,
-) -> Result<Vec<BulkString>, CommandError> {
+) -> Result<Vec<BulkString>, ParseCommandError> {
     let mut args = Vec::with_capacity(necessary);
     // Get all necessary args
     for _ in 0..necessary {
-        let val = iter.next().ok_or(CommandError::WrongNumArgs)?;
+        let val = iter.next().ok_or(ParseCommandError::WrongNumArgs)?;
         args.push(value_to_bulk_string(val)?);
     }
 
@@ -181,7 +165,7 @@ fn consume_args_from_iter(
     // If there are still any args outside of necessary and optional, return error.
     // Else return result.
     if iter.next().is_some() {
-        Err(CommandError::WrongNumArgs)
+        Err(ParseCommandError::WrongNumArgs)
     } else {
         Ok(args)
     }
@@ -206,8 +190,14 @@ pub enum Command {
     Get(GetArg),
 }
 
+pub trait CommandArgParser {
+    fn parse_arg(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, ParseCommandError>
+    where
+        Self: Sized;
+}
+
 #[derive(Debug, Clone, Error)]
-pub enum CommandError {
+pub enum ParseCommandError {
     #[error("Invalid command")]
     InvalidCommand,
 
@@ -222,48 +212,50 @@ pub enum CommandError {
 }
 
 impl Command {
-    pub fn parse(buf: &[u8]) -> Result<Self, CommandError> {
+    pub fn parse(buf: &[u8]) -> Result<Self, ParseCommandError> {
         let value = Value::decode(buf)?;
         Self::try_from(value)
     }
 
     fn get_command_str_from_iter(
         iter: &mut std::slice::Iter<'_, Value>,
-    ) -> Result<String, CommandError> {
+    ) -> Result<String, ParseCommandError> {
         // Get first value, which should be a BulkString
-        let first_val = iter.next().ok_or(CommandError::InvalidCommand)?;
+        let first_val = iter.next().ok_or(ParseCommandError::InvalidCommand)?;
         let bulk_string = first_val
             .bulk_string()
-            .ok_or(CommandError::InvalidCommand)?;
+            .ok_or(ParseCommandError::InvalidCommand)?;
 
-        bulk_string.as_str().ok_or(CommandError::InvalidCommand)
+        bulk_string
+            .as_str()
+            .ok_or(ParseCommandError::InvalidCommand)
     }
 }
 
 impl TryFrom<Value> for Command {
-    type Error = CommandError;
+    type Error = ParseCommandError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         let arr = match value {
             Value::Array(a) => a,
-            _ => return Err(CommandError::InvalidCommand),
+            _ => return Err(ParseCommandError::InvalidCommand),
         };
 
         let values = match arr.values() {
             Some(v) => v,
-            None => return Err(CommandError::InvalidCommand),
+            None => return Err(ParseCommandError::InvalidCommand),
         };
 
         let mut iter: std::slice::Iter<'_, Value> = values.iter();
         let cmd = Self::get_command_str_from_iter(&mut iter)?;
 
         match cmd.to_lowercase().as_str() {
-            "ping" => Ok(Self::Ping(PingArg::parse(&mut iter)?)),
-            "echo" => Ok(Self::Echo(EchoArg::parse(&mut iter)?)),
+            "ping" => Ok(Self::Ping(PingArg::parse_arg(&mut iter)?)),
+            "echo" => Ok(Self::Echo(EchoArg::parse_arg(&mut iter)?)),
             "set" => Ok(Self::Set(SetArg::parse(&mut iter)?)),
             "get" => Ok(Self::Get(GetArg::parse(&mut iter)?)),
             "info" => Ok(Self::Info(InfoArg::parse(&mut iter)?)),
-            _ => Err(CommandError::InvalidCommand),
+            _ => Err(ParseCommandError::InvalidCommand),
         }
     }
 }

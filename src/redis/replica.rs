@@ -1,8 +1,11 @@
+use std::rc::Rc;
+
 use thiserror::Error;
 use tokio::net::TcpStream;
 
 use super::{
-    cmd::{ping::PingArg, Command},
+    client::ClientError,
+    cmd::{ping::PingArg, Command, Echo, EchoArg, Ping},
     resp::Value,
     session::{Request, Response, Session, SessionError},
 };
@@ -15,7 +18,7 @@ pub enum ReplicationError {
     CannotConnectMaster,
 
     #[error(transparent)]
-    Session(#[from] SessionError),
+    Client(#[from] ClientError),
 
     #[error(transparent)]
     TokioIo(#[from] tokio::io::Error),
@@ -34,16 +37,9 @@ impl Replication {
 
         // First handshake
         // PING
-        let cmd_value: Value = Command::Ping(PingArg { msg: None }).into();
-        let request: Request = cmd_value.into();
-        let response = session
-            .send_request_and_wait_reply(request)
-            .await?
-            .ok_or(ReplicationError::CannotConnectMaster)?;
-
-        if !response_is(response, "PONG") {
-            return Err(ReplicationError::CannotConnectMaster);
-        }
+        let _ = Ping::client(&mut session)
+            .ping(PingArg { msg: None })
+            .await?;
 
         // Second handshake
         // REPLCONF listening-port <PORT>
