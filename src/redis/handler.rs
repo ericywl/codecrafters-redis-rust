@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::HashMap,
     sync::{Arc, RwLock},
     time::SystemTime,
 };
@@ -8,52 +8,12 @@ use thiserror::Error;
 use tracing::info;
 
 use super::{
-    cmd::{Command, Echo, Get, InfoArg, InfoSection, Ping, Set},
-    resp::{BulkString, SimpleString, Value},
+    cmd::{Command, Echo, Get, Info, Ping, Set},
+    resp::{BulkString, Value},
 };
 
 #[derive(Debug, Error)]
 pub enum HandleCommandError {}
-
-#[derive(Debug)]
-struct InfoHandler {
-    is_replica: bool,
-    master_repl_id_and_offset: Option<(String, u64)>,
-}
-
-impl InfoHandler {
-    fn new(is_replica: bool, master_repl_id_and_offset: Option<(String, u64)>) -> Self {
-        Self {
-            is_replica,
-            master_repl_id_and_offset,
-        }
-    }
-
-    /// Returns information and statistics about the server in a format that is simple to parse by computers and easy to read by humans.
-    fn handle(&self, arg: InfoArg) -> Result<Value, HandleCommandError> {
-        match arg.section().to_owned() {
-            InfoSection::Replication => self.handle_replication(),
-            InfoSection::Default => todo!(),
-        }
-    }
-
-    fn handle_replication(&self) -> Result<Value, HandleCommandError> {
-        if self.is_replica {
-            Ok(Value::BulkString(BulkString::from("role:slave")))
-        } else {
-            let mut info = vec!["role:master".to_string()];
-            if self.master_repl_id_and_offset.is_some() {
-                let m = self.master_repl_id_and_offset.clone().unwrap();
-                info.push(format!("master_replid:{}", m.0,));
-                info.push(format!("master_repl_offset:{}", m.1,));
-            }
-
-            Ok(Value::BulkString(BulkString::from(
-                info.join("\n").as_ref(),
-            )))
-        }
-    }
-}
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct StoredData {
@@ -93,11 +53,11 @@ impl CommandHandler {
         match cmd {
             Command::Ping(arg) => Ok(Ping::handler().handle(arg)),
             Command::Echo(arg) => Ok(Echo::handler().handle(arg)),
-            Command::Info(arg) => InfoHandler::new(
+            Command::Info(arg) => Ok(Info::handler(
                 self.config.is_replica,
                 self.config.master_repl_id_and_offset.clone(),
             )
-            .handle(arg),
+            .handle(arg)),
             // Clone Arc to increment reference count.
             Command::Set(arg) => Ok(Set::handler(self.map.clone()).handle(arg)),
             Command::Get(arg) => Ok(Get::handler(self.map.clone()).handle(arg)),
@@ -110,6 +70,7 @@ mod test {
     use std::{thread, time::Duration};
 
     use super::super::cmd::{GetArg, SetArg};
+    use super::super::resp::SimpleString;
     use super::*;
 
     fn new_hash_map() -> Arc<RwLock<HashMap<BulkString, StoredData>>> {

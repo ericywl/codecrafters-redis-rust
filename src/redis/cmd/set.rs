@@ -51,12 +51,12 @@ pub struct Set;
 impl Set {
     /// Returns an instance of SET client.
     pub fn client() -> SetClient {
-        todo!()
+        SetClient {}
     }
 
     /// Returns an instance of SET command handler.
     pub fn handler(map: Arc<RwLock<HashMap<BulkString, StoredData>>>) -> SetHandler {
-        SetHandler { map }
+        SetHandler::new(map)
     }
 
     /// Returns SET as a Command in the form of Value.
@@ -83,6 +83,10 @@ pub struct SetHandler {
 }
 
 impl SetHandler {
+    pub fn new(map: Arc<RwLock<HashMap<BulkString, StoredData>>>) -> Self {
+        Self { map }
+    }
+
     /// Set key to hold the value.
     /// If key already holds a value, it is overwritten.
     /// Any previous time to live associated with the key is discarded on successful SET operation.

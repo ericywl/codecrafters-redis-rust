@@ -6,55 +6,12 @@ pub mod set;
 pub use set::*;
 pub mod get;
 pub use get::*;
+pub mod info;
+pub use info::*;
 
 use thiserror::Error;
 
 use super::resp::{Array, BulkString, DecodeError, Value};
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct InfoArg {
-    section: InfoSection,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum InfoSection {
-    Default,
-    Replication,
-}
-
-impl InfoArg {
-    pub fn new(section: InfoSection) -> Self {
-        Self { section }
-    }
-
-    fn parse(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, ParseCommandError> {
-        let args = consume_args_from_iter(iter, 0, 1)?;
-        let section = Self::parse_info_section(args.get(0))?;
-
-        Ok(Self::new(section))
-    }
-
-    fn parse_info_section(opt_bs: Option<&BulkString>) -> Result<InfoSection, ParseCommandError> {
-        let section_str = match opt_bs {
-            Some(bs) => {
-                bs.as_str()
-                    .ok_or(ParseCommandError::InvalidArgument(Value::BulkString(
-                        bs.clone(),
-                    )))?
-            }
-            None => "".to_string(),
-        };
-
-        Ok(match section_str.to_lowercase().as_str() {
-            "replication" => InfoSection::Replication,
-            _ => InfoSection::Default,
-        })
-    }
-
-    pub fn section(&self) -> &InfoSection {
-        &self.section
-    }
-}
 
 fn bulk_string_to_uint64(bs: &BulkString) -> Result<u64, ParseCommandError> {
     let s = bulk_string_to_string(bs)?;
@@ -177,7 +134,7 @@ impl TryFrom<Value> for Command {
             "echo" => Ok(Self::Echo(EchoArg::parse_arg(&mut iter)?)),
             "set" => Ok(Self::Set(SetArg::parse_arg(&mut iter)?)),
             "get" => Ok(Self::Get(GetArg::parse_arg(&mut iter)?)),
-            "info" => Ok(Self::Info(InfoArg::parse(&mut iter)?)),
+            "info" => Ok(Self::Info(InfoArg::parse_arg(&mut iter)?)),
             _ => Err(ParseCommandError::InvalidCommand),
         }
     }

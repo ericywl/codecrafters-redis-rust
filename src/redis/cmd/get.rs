@@ -28,14 +28,17 @@ impl CommandArgParser for GetArg {
 pub struct Get;
 
 impl Get {
+    /// Returns an instance of GET client.
     pub fn client() -> GetClient {
-        todo!()
+        GetClient {}
     }
 
+    /// Returns an instance of GET command handler.
     pub fn handler(map: Arc<RwLock<HashMap<BulkString, StoredData>>>) -> GetHandler {
         GetHandler { map }
     }
 
+    /// Returns GET as a Command in the form of Value.
     pub fn command_value(arg: GetArg) -> Value {
         todo!()
     }

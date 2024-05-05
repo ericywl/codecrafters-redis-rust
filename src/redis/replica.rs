@@ -1,13 +1,10 @@
-use std::rc::Rc;
-
 use thiserror::Error;
 use tokio::net::TcpStream;
 
 use super::{
     client::ClientError,
-    cmd::{ping::PingArg, Command, Echo, EchoArg, Ping},
-    resp::Value,
-    session::{Request, Response, Session, SessionError},
+    cmd::{ping::PingArg, Ping},
+    session::Session,
 };
 
 pub struct Replication {}
@@ -45,13 +42,5 @@ impl Replication {
         // REPLCONF listening-port <PORT>
 
         Ok(())
-    }
-}
-
-fn response_is(resp: Response, expected: &str) -> bool {
-    let value: Value = resp.into();
-    match value.simple_string() {
-        Some(s) => s.as_str() == expected,
-        None => false,
     }
 }
