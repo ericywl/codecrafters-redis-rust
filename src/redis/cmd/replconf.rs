@@ -82,7 +82,7 @@ impl ReplConf {
         ReplConfHandler
     }
 
-    /// Returns PING as a Command in the form of Value.
+    /// Returns REPLCONF as a Command in the form of Value.
     pub fn command_value(arg: ReplConfArg) -> Value {
         let mut v = vec![Value::BulkString("REPLCONF".into())];
         let mut configs = arg

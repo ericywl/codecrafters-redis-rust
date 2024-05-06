@@ -58,6 +58,7 @@ impl CommandHandler {
                 self.config.master_repl_id_and_offset.clone(),
             )
             .handle(arg)),
+            Command::ReplConf(arg) => todo!(),
             // Clone Arc to increment reference count.
             Command::Set(arg) => Ok(Set::handler(self.map.clone()).handle(arg)),
             Command::Get(arg) => Ok(Get::handler(self.map.clone()).handle(arg)),

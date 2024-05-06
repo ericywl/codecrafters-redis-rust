@@ -70,6 +70,7 @@ pub enum Command {
     Info(InfoArg),
     Set(SetArg),
     Get(GetArg),
+    ReplConf(ReplConfArg),
 }
 
 pub trait CommandArgParser {
