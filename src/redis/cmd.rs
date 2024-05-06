@@ -8,6 +8,8 @@ pub mod get;
 pub use get::*;
 pub mod info;
 pub use info::*;
+pub mod replconf;
+pub use replconf::*;
 
 use thiserror::Error;
 

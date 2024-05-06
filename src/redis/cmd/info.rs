@@ -1,12 +1,9 @@
+use std::fmt::Display;
+
 use super::super::client::ClientError;
 use super::super::resp::{Array, BulkString, SimpleString, Value};
 use super::super::session::{Request, Responder, Response};
 use super::{consume_args_from_iter, CommandArgParser, ParseCommandError};
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct InfoArg {
-    pub section: InfoSection,
-}
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum InfoSection {
@@ -14,6 +11,19 @@ pub enum InfoSection {
     Replication,
 }
 
+impl InfoSection {
+    fn to_bulk_strings(&self) -> Vec<BulkString> {
+        match self {
+            Self::Default => vec![BulkString::from("default")],
+            Self::Replication => vec![BulkString::from("replication")],
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct InfoArg {
+    pub section: InfoSection,
+}
 impl CommandArgParser for InfoArg {
     fn parse_arg(iter: &mut std::slice::Iter<'_, Value>) -> Result<Self, ParseCommandError> {
         let args = consume_args_from_iter(iter, 0, 1)?;
@@ -35,10 +45,14 @@ impl InfoArg {
             None => "".to_string(),
         };
 
-        Ok(match section_str.to_lowercase().as_str() {
-            "replication" => InfoSection::Replication,
-            _ => InfoSection::Default,
-        })
+        match section_str.to_lowercase().as_str() {
+            "replication" => Ok(InfoSection::Replication),
+            "default" => Ok(InfoSection::Default),
+            "" => Ok(InfoSection::Default),
+            _ => Err(ParseCommandError::InvalidArgument(Value::BulkString(
+                section_str.into(),
+            ))),
+        }
     }
 }
 
@@ -60,7 +74,17 @@ impl Info {
 
     /// Returns INFO as a Command in the form of Value.
     pub fn command_value(arg: InfoArg) -> Value {
-        todo!()
+        let mut v = vec![Value::BulkString("INFO".into())];
+        let mut sections = arg
+            .section
+            .to_bulk_strings()
+            .iter()
+            .map(|bs| Value::BulkString(bs.clone()))
+            .collect();
+
+        v.append(&mut sections);
+
+        Value::Array(v.into())
     }
 }
 

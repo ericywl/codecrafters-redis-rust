@@ -6,10 +6,7 @@ use super::super::client::ClientError;
 use super::super::handler::StoredData;
 use super::super::resp::{Array, BulkString, SimpleString, Value};
 use super::super::session::{Request, Responder, Response};
-use super::{
-    bulk_string_to_string, bulk_string_to_uint64, consume_args_from_iter, CommandArgParser,
-    ParseCommandError,
-};
+use super::{consume_args_from_iter, CommandArgParser, ParseCommandError};
 
 #[derive(Debug, Clone)]
 pub struct GetArg {
@@ -40,7 +37,8 @@ impl Get {
 
     /// Returns GET as a Command in the form of Value.
     pub fn command_value(arg: GetArg) -> Value {
-        todo!()
+        let v = vec![Value::BulkString("GET".into()), Value::BulkString(arg.key)];
+        Value::Array(v.into())
     }
 }
 
@@ -87,5 +85,59 @@ impl GetHandler {
         };
 
         Value::BulkString(BulkString::null())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn command() {
+        let val = Get::command_value(GetArg { key: "key".into() });
+
+        assert_eq!(
+            val.array().unwrap().values().unwrap().to_vec(),
+            vec![
+                Value::BulkString("GET".into()),
+                Value::BulkString("key".into()),
+            ]
+        )
+    }
+}
+
+#[cfg(test)]
+mod handler_test {
+    use super::*;
+
+    fn new_get_handler(map: Arc<RwLock<HashMap<BulkString, StoredData>>>) -> GetHandler {
+        Get::handler(map)
+    }
+
+    fn simple_get(handler: &mut GetHandler, k: &str) -> Value {
+        let key = BulkString::from(k);
+
+        handler.handle(GetArg { key })
+    }
+
+    #[test]
+    fn handle_get() {
+        let key = "My Key";
+        let value = "My Value";
+
+        let mut map = HashMap::new();
+        map.insert(
+            BulkString::from(key),
+            StoredData {
+                value: BulkString::from(value),
+                deadline: None,
+            },
+        );
+
+        let map = Arc::new(RwLock::new(map));
+        let mut handler = new_get_handler(map.clone());
+
+        let get_value = simple_get(&mut handler, key);
+        assert_eq!(get_value, Value::BulkString(value.into()));
     }
 }

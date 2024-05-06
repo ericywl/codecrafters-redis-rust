@@ -6,6 +6,7 @@ pub mod resp;
 pub mod session;
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
 use thiserror::Error;
@@ -63,11 +64,11 @@ pub struct Redis {
 
 #[derive(Debug)]
 pub struct RedisConfig {
-    pub master_addr: Option<String>,
+    pub master_addr: Option<SocketAddr>,
 }
 
 impl Redis {
-    pub async fn init(addr: String, config: RedisConfig) -> Result<Self, RedisError> {
+    pub async fn init(addr: SocketAddr, config: RedisConfig) -> Result<Self, RedisError> {
         let listener = tokio::net::TcpListener::bind(addr).await?;
 
         let is_replica = config.master_addr.is_some();
@@ -77,7 +78,7 @@ impl Redis {
             Some((util::generate_random_alphanumeric_string(40), 0))
         };
         let replication = if is_replica {
-            Some(Replication::init(config.master_addr.unwrap().clone()).await?)
+            Some(Replication::init(config.master_addr.unwrap().clone(), addr.port()).await?)
         } else {
             None
         };

@@ -1,3 +1,5 @@
+use std::net::{SocketAddr, ToSocketAddrs};
+
 use clap::Parser;
 
 use redis_starter_rust::redis::{Redis, RedisConfig};
@@ -17,8 +19,11 @@ struct Args {
 }
 
 impl Args {
-    fn replica_addr(&self) -> Option<String> {
-        self.replica_of.clone().map(|v| v.join(":"))
+    fn replicate_addr(&self) -> Option<SocketAddr> {
+        match self.replica_of.clone().map(|v| v.join(":")) {
+            Some(s) => s.to_socket_addrs().unwrap().next(),
+            None => None,
+        }
     }
 }
 
@@ -31,11 +36,12 @@ async fn main() {
 
     let addr = format!("127.0.0.1:{}", args.port);
     info!("Listening to {addr}...");
+    let addr = addr.to_socket_addrs().unwrap().next().unwrap();
 
     let redis = match Redis::init(
         addr,
         RedisConfig {
-            master_addr: args.replica_addr(),
+            master_addr: args.replicate_addr(),
         },
     )
     .await
